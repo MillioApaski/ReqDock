@@ -308,3 +308,6 @@ input, textarea, select { color: var(--text); }
 .stream-entry.stream-out pre { color: var(--yellow); }
 .stream-send { margin-top: 10px; display: flex; gap: 8px; }
 @media(max-width: 600px) { .stream-controls { display: flex; flex-wrap: wrap; } .stream-controls .form-input { flex: 1 1 180px; } }
+.script-editors { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 9px; }
+.script-textarea { min-height: 95px; resize: vertical; padding: 11px; line-height: 1.5; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.response-preview { width: 100%; height: 340px; display: block; border: 0; background: #fff; }

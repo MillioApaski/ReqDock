@@ -2,21 +2,18 @@
 
 **A local-first API workspace for the web.** Build, send, and inspect HTTP requests in a lightweight browser client. Deploy the UI on Cloudflare Pages, with an optional locked-down Pages Functions proxy.
 
-> Development preview (v0.2). A browser-based API client, not a drop-in replacement for every Postman feature.
+> Early preview (v0.1). This is not a full Postman replacement yet.
 
 ## Features
 
 - GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS requests
 - Query params, custom headers, JSON/text/x-www-form-urlencoded bodies
 - Bearer Token, Basic Auth, and API Key authorization
-- Collections, nested folders, request naming and moving, history (last 100), and IndexedDB persistence
+- Request collections, editable names, history (last 100), and local persistence using IndexedDB
 - Environments and `{{variable}}` interpolation, plus `{{$timestamp}}` and `{{$guid}}`
-- Syntax-highlighted response and JSON folding with CodeMirror; raw response and header views
+- Syntax-highlighted response and JSON folding with CodeMirror; raw response, headers and sandboxed HTML preview
 - Direct browser requests and optional Cloudflare Pages Functions proxy
-- cURL import / export, Postman Collection v2.1 and Environment import/export, ReqDock v1/v2 JSON backups
-- Collection Runner with sequential HTTP requests, safe declarative response assertions and JSON reports
-- GraphQL POST bodies with JSON variables, multipart/form-data text fields and one transient file attachment
-- OAuth 2.0 Authorization Code + PKCE (public clients), direct WebSocket and SSE debugging with log export
+- cURL command import / export and ReqDock JSON backup import / export
 - Dark/light theme and responsive layout
 
 ## Quick start
@@ -63,14 +60,10 @@ The proxy refuses all requests until configured, and is restricted to exact allo
 ## Known limitations
 
 - Direct-mode requests can fail because of CORS, mixed-content restrictions, or browser networking rules. Cloud Proxy cannot reach `localhost`, RFC1918 addresses, or private services.
-- Multipart uploads have a **one-file-per-request** UI for now; files remain memory-only and are not persisted, included in imports/exports, or replayed by Collection Runner. Cloud Proxy uploads are limited to approximately 700 KiB because files are base64 encoded into a 1 MiB capped JSON payload.
-- OAuth 2.0 supports **Authorization Code + PKCE** only. Register `<your-origin>/oauth-callback.html` with the provider. Token endpoints must enable browser CORS or be allowlisted for the Cloud Proxy. Tokens are not auto-refreshed.
-- Browser WebSocket connections cannot set arbitrary headers. SSE supports browser-direct streaming only; Cloud Proxy does not stream SSE.
-- Assertion rules are simple declarative checks for status, duration, header, JSON path and substring; no arbitrary Postman JavaScript sandbox or pre-request scripts.
-- No multi-user cloud synchronization, scheduled collection runs, gRPC, built-in local-network agent, or complete Postman scripting compatibility. Collection v2.1 import/export is intentionally a subset: unsupported auth types, scripts and unsupported body modes are not round-tripped.
+- No multipart file upload, OAuth 2.0 workflow, pre-request scripts, collection runner, WebSocket, GraphQL specialist UI, or Postman Collection import yet.
 - The proxy reads a response into a capped preview buffer, rather than streaming arbitrary-sized downloads.
 - cURL import supports common portable options and explicitly rejects unsupported switches.
-- Workspace data is per-browser; there is no cloud sync or account system. Existing v0.1 database and backup data are migrated forward automatically.
+- Workspace data is per-browser; there is no cloud sync or account system.
 
 ## Stack
 
@@ -87,8 +80,29 @@ The `functions/api/proxy.js` file is a Cloudflare Pages Function and does not re
 
 ## AI generation disclosure
 
-Code and documentation are generated and maintained with assistance from **OpenAI GPT-6 Sol**.
+Code and documentation are generated and maintained with assistance from **OpenAI GPT-6**.
 
 ## License
 
 GNU General Public License v3.0. See [LICENSE](./LICENSE).
+
+## Workflow scripting (safe DSL)
+
+Use the **Tests** tab to enter statements for the current request. Before-request statements update the active environment before URL/headers/body interpolation. After-response statements can extract values from JSON or headers and run equality checks. In the Collection Runner, the environment flows into the next request; if an environment is selected, updated variables are saved. Without an environment, variables are scoped to that one run.
+
+```text
+# Before request
+set requestId={{$guid}}
+set sentAt={{$timestamp}}
+
+# After response
+expect status=200
+capture token=json.access_token
+capture trace=header.X-Trace-Id
+expect json.data.success=true
+unset temporaryToken
+```
+
+Supported commands: `set key=value`, `unset key`, `capture key=json.path`, `capture key=header.Name`, `expect status=200`, `expect json.path=value`, `expect header.Name=value`, `expect duration=123`. Captures work only after a response. This deliberately does not execute JavaScript, so untrusted imported collections cannot run scripts silently. Scripts are limited to 200 lines.
+
+HTML response Preview is rendered inside an iframe with a restrictive sandbox and content security policy, preventing active scripts and external network requests.
