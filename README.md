@@ -2,7 +2,7 @@
 
 **A local-first API workspace for the web.** Build, send, and inspect HTTP requests in a lightweight browser client. Deploy the UI on Cloudflare Pages, with an optional locked-down Pages Functions proxy.
 
-> Development preview (v0.5). A practical local-first API client, not a protocol-level replacement for every Postman feature.
+> Development preview (v0.6). A practical local-first API client, not a protocol-level replacement for every Postman feature.
 
 ## Features
 
@@ -17,7 +17,13 @@
 - Collection Runner, response assertions, sequential environment capture and safe request/response workflow scripting
 - GraphQL, multipart file upload, OAuth 2.0 Authorization Code + PKCE, WebSocket and Server-Sent Events consoles
 - Optional client-side encrypted Cloudflare D1 snapshots; cloud backups are opt-in and require configuration
-- Dark/light theme and responsive layout
+- Dark/light theme, responsive editor-first layout, collapsible sidebar, resizable request/response split and independently scrolling panels
+
+## Workspace layout (v0.6)
+
+Request and response scroll independently. Drag the divider between the panels to change their height; double-click to reset, or use arrow keys while the divider is focused. The split ratio is saved locally. On desktop, toggle the Collections sidebar using the upper-left toolbar button.
+
+The browser layout smoke suite covers desktop/mobile viewport fit, long parameter lists, and splitter persistence. Run `npm run test:e2e` after `npx playwright install chromium`.
 
 ## Quick start
 

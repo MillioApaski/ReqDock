@@ -1,7 +1,7 @@
 {
   "name": "reqdock",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "pages:dev": "npm run build && wrangler pages dev dist",
-    "pages:deploy": "npm run build && wrangler pages deploy dist"
+    "pages:deploy": "npm run build && wrangler pages deploy dist",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@codemirror/lang-json": "^6.0.2",
@@ -29,6 +30,7 @@
     "typescript": "~5.8.3",
     "vite": "^6.3.5",
     "vitest": "^3.2.4",
-    "wrangler": "^4.27.0"
+    "wrangler": "^4.27.0",
+    "@playwright/test": "^1.56.1"
   }
 }
