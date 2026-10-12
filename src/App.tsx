@@ -16,13 +16,14 @@ import { parsePostmanCollection, exportPostmanCollection, parsePostmanEnvironmen
 import { evaluateAssertions, newAssertion } from './lib/assertions';
 import { runCollection, type RunResult } from './lib/runner';
 import { authorizePkce } from './lib/oauth';
+import { encryptBackup, decryptBackup, writeCloudSnapshot, readCloudSnapshot } from './lib/sync';
 import { applyWorkflowScript } from './lib/script';
 import { StreamConsole } from './components/StreamConsole';
 import { decodeBase64, formatJson, paramsFromUrl, prepareRequest, sendRequest, setUrlParams } from './lib/request';
 import { blankPair, exampleRequest, newId, newRequest, type Environment, type HistoryItem, type HttpMethod, type KeyValue, type RequestModel, type SavedResponse, type Tab, type Transport, type Collection, type Folder, type Assertion } from './types';
 
 type SidebarSection = 'collections' | 'history';
-type Modal = 'curl' | 'environment' | 'proxy' | 'runner' | 'stream' | null;
+type Modal = 'curl' | 'environment' | 'proxy' | 'runner' | 'stream' | 'sync' | null;
 const METHODS: HttpMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
 const methodClasses: Record<HttpMethod, string> = {
   GET: 'method-get', POST: 'method-post', PUT: 'method-put', PATCH: 'method-patch',
@@ -52,6 +53,9 @@ export default function App() {
   const [proxyKey, setProxyKey] = useState('');
   const [upload, setUpload] = useState<{ fieldName: string; file: File } | undefined>(undefined);
   const [authorizing, setAuthorizing] = useState(false);
+  const [syncKey, setSyncKey] = useState('');
+  const [syncPassphrase, setSyncPassphrase] = useState('');
+  const [syncBusy, setSyncBusy] = useState(false);
   const [response, setResponse] = useState<SavedResponse | null>(null);
   const [scriptResults, setScriptResults] = useState<ReturnType<typeof evaluateAssertions>>([]);
   const [error, setError] = useState('');
@@ -97,6 +101,7 @@ export default function App() {
     return () => { mounted = false; };
   }, []);
 
+  useEffect(() => { if (modal !== 'sync') { setSyncKey(''); setSyncPassphrase(''); } }, [modal]);
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('reqdock-theme', theme); }, [theme]);
   useEffect(() => {
     if (!ready) return;
@@ -283,6 +288,44 @@ export default function App() {
     try { await runCollection(queue, selectedEnv, transport, proxyKey, abort.signal, setRunResults, environment => { void saveEnvironment(environment); }); }
     finally { setRunning(false); runnerRef.current = null; }
   };
+  const uploadCloud = async () => {
+    if (syncBusy) return;
+    if (!window.confirm('Replace the existing cloud snapshot with your current local workspace?')) return;
+    setSyncBusy(true);
+    try {
+      const content = { version: 2, requests: await db.requests.toArray(), environments: await db.environments.toArray(), collections: await db.collections.toArray(), folders: await db.folders.toArray() };
+      const encrypted = await encryptBackup(content, syncPassphrase);
+      await writeCloudSnapshot(encrypted, syncKey);
+      notify('Encrypted workspace uploaded to Cloudflare D1');
+    } catch (error) { notify(error instanceof Error ? error.message : 'Cloud upload failed'); }
+    finally { setSyncBusy(false); }
+  };
+  const restoreCloud = async () => {
+    if (syncBusy) return;
+    setSyncBusy(true);
+    try {
+      const snapshot = await readCloudSnapshot(syncKey);
+      const data = readBackup(await decryptBackup(snapshot.encrypted, syncPassphrase));
+      if (!window.confirm(`Restore cloud snapshot from ${snapshot.updatedAt}? This REPLACES your local requests, collections and environments.`)) return;
+      if (!data.collections.length) {
+        const defaultCollection: Collection = { id: newId(), name: 'Restored collection', createdAt: Date.now() };
+        data.collections = [defaultCollection];
+        data.requests = data.requests.map(r => ({ ...r, collectionId: r.collectionId || defaultCollection.id }));
+      }
+      await db.transaction('rw', db.requests, db.environments, db.collections, db.folders, async () => {
+        await Promise.all([db.requests.clear(), db.environments.clear(), db.collections.clear(), db.folders.clear()]);
+        await db.collections.bulkPut(data.collections); await db.folders.bulkPut(data.folders);
+        await db.requests.bulkPut(data.requests); await db.environments.bulkPut(data.environments);
+      });
+      const restored = data.requests[0] || { ...newRequest(), collectionId: data.collections[0].id };
+      setRequests(data.requests); setCollections(data.collections); setFolders(data.folders); setEnvironments(data.environments);
+      setExpanded([...data.collections.map(c => c.id), ...data.folders.map(f => f.id)]);
+      setRunCollectionId(data.collections[0].id); setEnvironmentId('');
+      setDraft(restored); setParams(paramsFromUrl(restored.url)); setResponse(null); setError('');
+      notify('Encrypted cloud snapshot restored locally');
+    } catch (error) { notify(error instanceof Error ? error.message : 'Cloud restore failed'); }
+    finally { setSyncBusy(false); }
+  };
   const importBackup = async (file?: File) => {
     if (!file) return;
     try {
@@ -349,7 +392,7 @@ export default function App() {
     <main className="main-panel">
       <header className="topbar">
         <div className="topbar-left"><button className="icon-button mobile-only" aria-label="Toggle menu" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button><span className="breadcrumb">Workspace</span><span className="slash">/</span><span className="breadcrumb-current">{draft.name}</span></div>
-        <div className="topbar-actions"><div className="environment-picker"><Globe2 size={15} /><select aria-label="Current environment" value={environmentId} onChange={e => setEnvironmentId(e.target.value)}><option value="">No environment</option>{environments.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}</select><ChevronDown size={13} /></div><button className="icon-button" title="Edit environments" onClick={() => setModal('environment')}><SlidersHorizontal size={17} /></button><span className="topbar-divider" /><button className="icon-button" title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}</button></div>
+        <div className="topbar-actions"><div className="environment-picker"><Globe2 size={15} /><select aria-label="Current environment" value={environmentId} onChange={e => setEnvironmentId(e.target.value)}><option value="">No environment</option>{environments.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}</select><ChevronDown size={13} /></div><button className="icon-button" title="Encrypted cloud sync" onClick={() => setModal('sync')}><Cloud size={17} /></button><button className="icon-button" title="Edit environments" onClick={() => setModal('environment')}><SlidersHorizontal size={17} /></button><span className="topbar-divider" /><button className="icon-button" title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}</button></div>
       </header>
       <div className="content">
         <div className="content-heading"><div><div className="eyebrow">API WORKSPACE <span className="eyebrow-dot">·</span> REQUEST BUILDER</div><div className="heading-line"><input aria-label="Request name" className="request-title" value={draft.name} onChange={e => updateDraft({ name: e.target.value })} /><span className="saved-pill"><Check size={12} /> Local</span></div><p>Compose, send, and inspect HTTP requests in one place.</p><div className="request-location"><select aria-label="Request collection" value={draft.collectionId || ''} onChange={e => moveRequest(e.target.value)}>{collections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select><select aria-label="Request folder" value={draft.folderId || ''} onChange={e => moveRequest(draft.collectionId || '', e.target.value || undefined)}><option value="">Collection root</option>{folders.filter(f => f.collectionId === draft.collectionId).map(f => <option key={f.id} value={f.id}>{f.name}</option>)}</select></div></div><div className="request-actions"><button className="button outlined" onClick={() => setModal('stream')}><Activity size={15} /> Live</button><button className="button outlined" onClick={() => { setModal('runner'); setRunCollectionId(draft.collectionId || collections[0]?.id || ''); }}><Play size={15} /> Run</button><button className="button outlined" onClick={() => { void db.requests.put(draft); notify('Saved locally'); }}><Save size={15} /> Save</button><div className="dropdown"><button className="button outlined" onClick={() => setModal('curl')}><Terminal size={15} /> Import cURL</button></div><button className="icon-button" title="Copy as cURL" onClick={copyCurl}><Copy size={17} /></button></div></div>
@@ -389,7 +432,8 @@ export default function App() {
       </div>
     </main>
     {toast && <div className="toast"><Check size={16} /> {toast}</div>}
-    {modal && <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setModal(null); }}><div className="modal" role="dialog" aria-modal="true" aria-label={modal === 'curl' ? 'Import cURL' : modal === 'proxy' ? 'Proxy settings' : modal === 'runner' ? 'Collection runner' : modal === 'stream' ? 'WebSocket / SSE console' : 'Environments'}><div className="modal-header"><strong>{modal === 'curl' ? 'Import cURL' : modal === 'proxy' ? 'Cloud Proxy settings' : modal === 'runner' ? 'Collection runner' : modal === 'stream' ? 'WebSocket / SSE console' : 'Manage environments'}</strong><button className="icon-button" onClick={() => setModal(null)} title="Close"><X size={18} /></button></div>
+    {modal && <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setModal(null); }}><div className="modal" role="dialog" aria-modal="true" aria-label={modal === 'curl' ? 'Import cURL' : modal === 'proxy' ? 'Proxy settings' : modal === 'runner' ? 'Collection runner' : modal === 'stream' ? 'WebSocket / SSE console' : modal === 'sync' ? 'Encrypted cloud backup' : 'Environments'}><div className="modal-header"><strong>{modal === 'curl' ? 'Import cURL' : modal === 'proxy' ? 'Cloud Proxy settings' : modal === 'runner' ? 'Collection runner' : modal === 'stream' ? 'WebSocket / SSE console' : modal === 'sync' ? 'Encrypted cloud backup' : 'Manage environments'}</strong><button className="icon-button" onClick={() => setModal(null)} title="Close"><X size={18} /></button></div>
+      {modal === 'sync' && <><div className="proxy-info"><ShieldAlert size={18} /><div><strong>Encrypted, opt-in workspace backup</strong><p>AES-256-GCM encryption takes place in your browser. Cloudflare D1 stores only ciphertext. You must configure the D1 binding and a separate sync authentication key; neither secret nor passphrase is saved.</p></div></div><label className="field-label">Server sync key</label><input className="form-input" type="password" autoComplete="off" value={syncKey} onChange={e => setSyncKey(e.target.value)} placeholder="REQDOCK_SYNC_KEY" /><label className="field-label">Encryption passphrase (12+ characters)</label><input className="form-input" type="password" autoComplete="off" value={syncPassphrase} onChange={e => setSyncPassphrase(e.target.value)} placeholder="Your private encryption passphrase" /><p className="modal-note">Uploading overwrites the single remote snapshot. Restoring replaces local requests and settings after confirmation. Forgotten encryption passphrases cannot be recovered. D1 binding: <code>REQDOCK_DB</code>.</p><div className="modal-footer"><button className="button outlined" disabled={syncBusy || !syncKey || syncPassphrase.length < 12} onClick={() => void restoreCloud()}><Download size={14} /> Restore cloud</button><button className="button primary" disabled={syncBusy || !syncKey || syncPassphrase.length < 12} onClick={() => void uploadCloud()}><Upload size={14} /> Upload encrypted snapshot</button></div></>}
       {modal === 'stream' && <StreamConsole initialUrl={draft.url} onClose={() => setModal(null)} />}
       {modal === 'runner' && <><p className="modal-note">Run every request in a collection sequentially, evaluate response assertions and download a JSON report. HTTP 4xx/5xx are responses, not transport failures.</p><div className="environment-controls"><select className="form-input" value={runCollectionId} onChange={e => setRunCollectionId(e.target.value)}>{collections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select><button className="button primary" onClick={() => void startRunner()}>{running ? 'Cancel run' : 'Run collection'}</button></div><div className="run-results">{runResults.map(r => <div className="run-line" key={r.requestId}><strong className="truncate">{r.name}</strong><span className={r.error || r.assertions.some(x => !x.passed) || (r.status && r.status >= 400) ? 'error-color' : 'success-color'}>{r.error || `${r.status} · ${r.duration}ms · ${r.assertions.filter(x => x.passed).length}/${r.assertions.length} tests`}</span></div>)}</div><div className="modal-footer"><button className="button outlined" disabled={!runResults.length} onClick={() => downloadJson('reqdock-test-report.json', { createdAt: new Date().toISOString(), results: runResults })}><Download size={14} /> Export report</button><button className="button outlined" onClick={() => setModal(null)}>Close</button></div></>}
       {modal === 'curl' && <><p className="modal-note">Paste a cURL command to populate URL, method, headers, and body. Unsupported options produce an error rather than being silently ignored.</p><textarea className="modal-textarea" placeholder={'curl -X POST https://api.example.com \\\n  -H "Content-Type: application/json" \\\n  -d \'{"hello":"world"}\''} value={curlText} onChange={e => setCurlText(e.target.value)} rows={8} /><div className="modal-footer"><button className="button outlined" onClick={() => setModal(null)}>Cancel</button><button className="button primary" onClick={onImportCurl}><Upload size={15} /> Import request</button></div></>}

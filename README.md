@@ -106,3 +106,17 @@ unset temporaryToken
 Supported commands: `set key=value`, `unset key`, `capture key=json.path`, `capture key=header.Name`, `expect status=200`, `expect json.path=value`, `expect header.Name=value`, `expect duration=123`. Captures work only after a response. This deliberately does not execute JavaScript, so untrusted imported collections cannot run scripts silently. Scripts are limited to 200 lines.
 
 HTML response Preview is rendered inside an iframe with a restrictive sandbox and content security policy, preventing active scripts and external network requests.
+
+## Optional encrypted Cloudflare D1 backups
+
+Cloud backup is **disabled by default**. ReqDock can upload and restore one encrypted workspace snapshot, but it cannot configure your Cloudflare account automatically. You must create a D1 database, initialize its schema, and bind it to Pages Functions:
+
+1. In Cloudflare, create a D1 database named `reqdock-sync`.
+2. Apply [`migrations/0001_sync.sql`](./migrations/0001_sync.sql) to that database using the D1 console or Wrangler.
+3. Under Pages → Settings → Bindings, add a **D1 database** binding with the variable name **`REQDOCK_DB`** pointing to the database.
+4. Under Pages → Settings → Variables and Secrets, create a strong, random, **secret** named **`REQDOCK_SYNC_KEY`**. Redeploy so Functions picks up the new bindings.
+5. In ReqDock, open the cloud icon in the top bar. Enter the server sync key and a **separate encryption passphrase** of at least 12 characters. Upload or restore manually. Never put either secret in GitHub or environment variables prefixed with `VITE_`.
+
+AES-256-GCM encryption runs in the browser, using a key derived with PBKDF2-SHA-256 (250,000 iterations, random salt). The server stores only an authenticated encrypted envelope. The secret sync key authorizes access to the endpoint; the encryption passphrase is not sent to the server. Both values remain in browser memory, not localStorage or IndexedDB, and are cleared when closing the dialog. Use a strong unique passphrase and back it up safely: lost passphrases mean permanent loss of cloud data.
+
+**Limitations:** The endpoint is intended for one private workspace, not multiple independent users. Each upload replaces the previous snapshot, and restoring replaces local workspace data. There is no automatic merging, conflict resolution, background synchronization, or password recovery. The JSON API body is capped at 1 MiB. Require Cloudflare Access protection and rate limiting on `/api/sync` for additional security. D1 backups are not a substitute for independent local exports.
