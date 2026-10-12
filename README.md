@@ -2,18 +2,21 @@
 
 **A local-first API workspace for the web.** Build, send, and inspect HTTP requests in a lightweight browser client. Deploy the UI on Cloudflare Pages, with an optional locked-down Pages Functions proxy.
 
-> Early preview (v0.1). This is not a full Postman replacement yet.
+> Development preview (v0.5). A practical local-first API client, not a protocol-level replacement for every Postman feature.
 
 ## Features
 
 - GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS requests
 - Query params, custom headers, JSON/text/x-www-form-urlencoded bodies
 - Bearer Token, Basic Auth, and API Key authorization
-- Request collections, editable names, history (last 100), and local persistence using IndexedDB
+- Request collections, nested folders, session-scoped multi-request tabs, history (last 100), and local persistence using IndexedDB
 - Environments and `{{variable}}` interpolation, plus `{{$timestamp}}` and `{{$guid}}`
 - Syntax-highlighted response and JSON folding with CodeMirror; raw response, headers and sandboxed HTML preview
 - Direct browser requests and optional Cloudflare Pages Functions proxy
-- cURL command import / export and ReqDock JSON backup import / export
+- cURL commands, Postman Collection v2.1, Postman environments, and OpenAPI 3.0/3.1 JSON/YAML import; ReqDock JSON backups and Postman Collection export
+- Collection Runner, response assertions, sequential environment capture and safe request/response workflow scripting
+- GraphQL, multipart file upload, OAuth 2.0 Authorization Code + PKCE, WebSocket and Server-Sent Events consoles
+- Optional client-side encrypted Cloudflare D1 snapshots; cloud backups are opt-in and require configuration
 - Dark/light theme and responsive layout
 
 ## Quick start
@@ -57,13 +60,27 @@ The proxy refuses all requests until configured, and is restricted to exact allo
 
 **Important:** Free-tier capacity and restrictions may change. This is a development tool and not suitable for sensitive secrets on shared or untrusted computers. Auth values and environment variables are stored in the browser's IndexedDB, not encrypted at rest. Exported backups can contain credentials. Protect them accordingly.
 
+## OpenAPI import (v0.5)
+
+Use **Import OpenAPI** in the footer to import a `.json`, `.yaml`, or `.yml` OpenAPI 3.0/3.1 file (maximum 2 MiB). The importer runs entirely in your browser and never retrieves external references. It creates a collection, groups operations into folders by their first tag, and maps common query/header parameters, security schemes, server variables and JSON/form request body examples. Local JSON Pointer `$ref` entries are supported with bounded recursion.
+
+- Imported servers using relative URLs, and specifications without servers, use `{{baseUrl}}`: set this environment variable to a fully qualified origin before sending.
+- Generated `{{parameter}}` placeholders and authentication placeholders are not secrets; replace them in the request or an environment.
+- YAML parsing rejects duplicate keys; remote `$ref` URLs and Swagger 2.0 specifications are intentionally unsupported.
+- Importing does not automatically execute requests, follow external links, or run arbitrary scripts.
+
+## Request tabs (v0.5)
+
+Open any saved request from the Collections sidebar. Multiple requests can remain open simultaneously; close tabs without deleting their underlying requests. Open tab IDs are saved to sessionStorage only, while request definitions remain in IndexedDB. Response views for open tabs are kept in memory for the current session. Binary attachments remain in memory and are cleared on request selection.
+
 ## Known limitations
 
-- Direct-mode requests can fail because of CORS, mixed-content restrictions, or browser networking rules. Cloud Proxy cannot reach `localhost`, RFC1918 addresses, or private services.
-- No multipart file upload, OAuth 2.0 workflow, pre-request scripts, collection runner, WebSocket, GraphQL specialist UI, or Postman Collection import yet.
+- Direct-mode requests may fail because of CORS, mixed-content restrictions, or browser networking rules. Cloud Proxy cannot reach localhost, RFC1918 addresses, or private services.
 - The proxy reads a response into a capped preview buffer, rather than streaming arbitrary-sized downloads.
 - cURL import supports common portable options and explicitly rejects unsupported switches.
-- Workspace data is per-browser; there is no cloud sync or account system.
+- Only safe declarative scripting is supported; arbitrary Postman JavaScript sandbox scripts cannot run.
+- gRPC, local-network agents, complete Cookie Jar management, full Postman scripting compatibility and multi-user cloud conflict resolution are not yet implemented.
+- Encrypted cloud backup is an optional manual snapshot workflow, not automatic sync. No account or team collaboration system exists.
 
 ## Stack
 
