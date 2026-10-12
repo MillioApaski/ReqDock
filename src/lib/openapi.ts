@@ -16,7 +16,7 @@ export function parseApiDefinitionText(text: string): ImportedCollection {
   if (text.trimStart().startsWith('{')) {
     try { data = JSON.parse(text); } catch { throw new Error('Invalid JSON API definition.'); }
   } else {
-    const document = parseDocument(text, { uniqueKeys: true, maxAliasCount: 10 });
+    const document = parseDocument(text, { uniqueKeys: true });
     if (document.errors.length) throw new Error(`Invalid YAML: ${document.errors[0].message}`);
     data = document.toJS({ maxAliasCount: 10 });
   }
