@@ -16,6 +16,7 @@ import { parsePostmanCollection, exportPostmanCollection, parsePostmanEnvironmen
 import { evaluateAssertions, newAssertion } from './lib/assertions';
 import { runCollection, type RunResult } from './lib/runner';
 import { authorizePkce } from './lib/oauth';
+import { applyWorkflowScript } from './lib/script';
 import { StreamConsole } from './components/StreamConsole';
 import { decodeBase64, formatJson, paramsFromUrl, prepareRequest, sendRequest, setUrlParams } from './lib/request';
 import { blankPair, exampleRequest, newId, newRequest, type Environment, type HistoryItem, type HttpMethod, type KeyValue, type RequestModel, type SavedResponse, type Tab, type Transport, type Collection, type Folder, type Assertion } from './types';
@@ -46,12 +47,13 @@ export default function App() {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [section, setSection] = useState<SidebarSection>('collections');
   const [activeTab, setActiveTab] = useState<Tab>('params');
-  const [responseTab, setResponseTab] = useState<'pretty' | 'raw' | 'headers'>('pretty');
+  const [responseTab, setResponseTab] = useState<'pretty' | 'raw' | 'headers' | 'preview'>('pretty');
   const [transport, setTransport] = useState<Transport>('direct');
   const [proxyKey, setProxyKey] = useState('');
   const [upload, setUpload] = useState<{ fieldName: string; file: File } | undefined>(undefined);
   const [authorizing, setAuthorizing] = useState(false);
   const [response, setResponse] = useState<SavedResponse | null>(null);
+  const [scriptResults, setScriptResults] = useState<ReturnType<typeof evaluateAssertions>>([]);
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
   const [modal, setModal] = useState<Modal>(null);
@@ -67,7 +69,7 @@ export default function App() {
   latestRequestRef.current = draft;
   const selectedEnv = environments.find(e => e.id === environmentId);
   const selectedCollection = collections.find(c => c.id === draft.collectionId);
-  const testResults = response ? evaluateAssertions(draft.assertions || [], response) : [];
+  const testResults = response ? [...evaluateAssertions(draft.assertions || [], response), ...scriptResults] : [];
 
   const notify = (message: string) => { setToast(message); window.setTimeout(() => setToast(''), 3500); };
 
@@ -199,14 +201,17 @@ export default function App() {
 
   const execute = useCallback(async () => {
     if (sending) { abortRef.current?.abort(); return; }
-    setError(''); setResponse(null); setResponseTab('pretty');
+    setError(''); setResponse(null); setResponseTab('pretty'); setScriptResults([]);
     let prepared;
-    try { prepared = prepareRequest(draft, selectedEnv); }
+    let workingEnv: Environment | undefined;
+    try { workingEnv = applyWorkflowScript(draft.preScript || '', selectedEnv, 'before').environment; prepared = prepareRequest(draft, workingEnv); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Invalid request.'); return; }
     const controller = new AbortController(); abortRef.current = controller; setSending(true);
     try {
       const result = await sendRequest(prepared, transport, controller.signal, proxyKey, upload);
-      setResponse(result);
+      const after = applyWorkflowScript(draft.postScript || '', workingEnv, 'after', result);
+      setResponse(result); setScriptResults(after.checks);
+      if (selectedEnv) await saveEnvironment(after.environment);
       const item: HistoryItem = { id: newId(), at: Date.now(), request: structuredClone(draft), status: result.status, duration: result.duration };
       void persistHistory(item).then(() => setHistory(old => [item, ...old].slice(0, 100)));
     } catch (cause) {
@@ -275,7 +280,7 @@ export default function App() {
     if (!queue.length) { notify('Collection has no requests'); return; }
     const abort = new AbortController(); runnerRef.current = abort;
     setRunning(true); setRunResults([]);
-    try { await runCollection(queue, selectedEnv, transport, proxyKey, abort.signal, setRunResults); }
+    try { await runCollection(queue, selectedEnv, transport, proxyKey, abort.signal, setRunResults, environment => { void saveEnvironment(environment); }); }
     finally { setRunning(false); runnerRef.current = null; }
   };
   const importBackup = async (file?: File) => {
@@ -367,6 +372,7 @@ export default function App() {
             {activeTab === 'tests' && <div className="tests-panel"><div className="panel-label"><strong>Response assertions</strong><span>Safe declarative checks (no arbitrary JavaScript execution)</span></div>
               {(draft.assertions || []).map(rule => <div key={rule.id} className="assertion-row"><select className="form-input" value={rule.kind} onChange={e => updateDraft({ assertions: (draft.assertions || []).map(x => x.id === rule.id ? { ...x, kind: e.target.value as Assertion['kind'] } : x) })}><option value="status">Status equals</option><option value="duration">Duration ≤ ms</option><option value="json">JSON path equals</option><option value="header">Header equals</option><option value="contains">Body contains</option></select><input className="form-input" placeholder={rule.kind === 'json' ? 'data.id' : rule.kind === 'header' ? 'Content-Type' : 'Target (optional)'} disabled={!['json','header'].includes(rule.kind)} value={rule.target} onChange={e => updateDraft({ assertions: (draft.assertions || []).map(x => x.id === rule.id ? { ...x, target: e.target.value } : x) })} /><input className="form-input" placeholder="Expected value" value={rule.expected} onChange={e => updateDraft({ assertions: (draft.assertions || []).map(x => x.id === rule.id ? { ...x, expected: e.target.value } : x) })} /><button className="icon-button" title="Remove assertion" onClick={() => updateDraft({ assertions: (draft.assertions || []).filter(x => x.id !== rule.id) })}><Trash2 size={15} /></button></div>)}
               <button className="button outlined" onClick={() => updateDraft({ assertions: [...draft.assertions || [], newAssertion()] })}><Plus size={14} /> Add assertion</button>
+              <div className="script-editors"><label className="field-label">Before request</label><textarea className="form-input script-textarea" spellCheck={false} value={draft.preScript || ''} onChange={e => updateDraft({ preScript: e.target.value })} placeholder={'# Dynamic request variables\nset requestId={{$guid}}'} /><label className="field-label">After response</label><textarea className="form-input script-textarea" spellCheck={false} value={draft.postScript || ''} onChange={e => updateDraft({ postScript: e.target.value })} placeholder={'# Extract a token and verify response\ncapture token=json.access_token\nexpect status=200'} /><p className="modal-note">Safe workflow commands: <code>set key=value</code>, <code>unset key</code>, <code>capture key=json.path</code>, <code>expect status=200</code>, <code>expect header.Content-Type=application/json</code>. No JavaScript execution.</p></div>
               {response && <div className="assertion-results">{testResults.map((result, i) => <div key={result.id} className={result.passed ? 'success-color' : 'error-color'}>{result.passed ? '✓' : '✕'} #{i + 1} {result.label} <small>actual: {result.actual}</small></div>)}</div>}
             </div>}
             {activeTab === 'body' && <><div className="body-toolbar"><div className="body-types">{(['none', 'json', 'text', 'urlencoded', 'graphql', 'form-data'] as const).map(type => <label key={type}><input type="radio" checked={draft.bodyType === type} onChange={() => updateDraft({ bodyType: type })} /> {type === 'none' ? 'none' : type === 'json' ? 'JSON' : type === 'text' ? 'raw text' : type === 'urlencoded' ? 'x-www-form-urlencoded' : type === 'graphql' ? 'GraphQL' : 'form-data'}</label>)}</div><span>{['GET','HEAD'].includes(draft.method) ? 'GET/HEAD request bodies are not sent' : 'UTF-8'}</span></div>{draft.bodyType !== 'none' ? <CodeMirror className="body-editor" value={draft.body} height="200px" theme={theme === 'dark' ? oneDark : 'light'} extensions={draft.bodyType === 'json' ? [json()] : []} onChange={value => updateDraft({ body: value })} basicSetup={{ foldGutter: true, lineNumbers: true }} /> : <div className="no-body">This request does not have a body.</div>}{draft.bodyType === 'graphql' && <><label className="field-label">GraphQL variables (JSON)</label><textarea className="form-input graphql-variables" value={draft.graphqlVariables || '{}'} onChange={e => updateDraft({ graphqlVariables: e.target.value })} /></>}{draft.bodyType === 'form-data' && <><p className="modal-note">One form field per line: name=value. Optional file attachment is kept only in memory.</p><div className="file-upload-row"><input className="form-input" aria-label="Form file field name" placeholder="File field name" value={upload?.fieldName || 'file'} onChange={e => setUpload(old => old ? { ...old, fieldName: e.target.value } : old)} /><input aria-label="Choose upload file" type="file" onChange={e => { const file = e.target.files?.[0]; setUpload(file ? { fieldName: upload?.fieldName || 'file', file } : undefined); }} />{upload && <span>{formatBytes(upload.file.size)}</span>}</div></>}</>}
@@ -375,8 +381,8 @@ export default function App() {
         <div className="response-heading"><div className="response-title"><Activity size={18} /><strong>Response</strong>{response && <span className={`response-status ${response.status < 400 ? 'status-good' : 'status-bad'}`}>{response.status} {response.statusText}</span>}</div><div className="response-meta">{response && <><span><Clock3 size={13} /> {response.duration} ms</span><span><ArrowDownToLine size={13} /> {formatBytes(response.size)}</span></>}</div></div>
         <section className="response-box" aria-label="Response viewer">
           {error ? <div className="response-error"><ShieldAlert size={21} /><div><strong>Request failed</strong><p>{error}</p>{transport === 'direct' && <button className="text-link" onClick={() => setModal('proxy')}>Configure Cloud Proxy <ExternalLink size={12} /></button>}</div></div> : response ? <>
-            <div className="response-toolbar"><div className="tab-strip" role="tablist">{(['pretty', 'raw', 'headers'] as const).map(tab => <button key={tab} role="tab" aria-selected={responseTab === tab} onClick={() => setResponseTab(tab)} className={`tab ${responseTab === tab ? 'active' : ''}`}>{tab === 'pretty' ? 'Pretty' : tab === 'raw' ? 'Raw' : 'Headers'}{tab === 'headers' && <span className="count-badge">{response.headers.length}</span>}</button>)}</div><div className="response-toolbar-right">{response.contentType && <span className="response-kind">{response.contentType.split(';')[0]}</span>}<button className="icon-button subtle" title="Copy response text" onClick={() => void navigator.clipboard.writeText(response.text).then(() => notify('Response copied'))}><Copy size={15} /></button></div></div>
-            {responseTab === 'headers' ? <div className="response-headers">{response.headers.map(header => <div className="header-line" key={header.id}><span>{header.key}</span><span>{header.value}</span></div>)}</div> : response.bodyBase64 ? <div className="binary-content"><FileJson size={30} /><strong>Binary response</strong><p>{formatBytes(response.size)} · {response.contentType || 'application/octet-stream'}</p><button className="button outlined" onClick={downloadBinary}><Download size={15} /> Download file</button></div> : <CodeMirror className="response-editor" value={responseTab === 'pretty' ? pretty : response.text} editable={false} readOnly={true} height="min(38vh, 340px)" theme={theme === 'dark' ? oneDark : 'light'} extensions={responseTab === 'pretty' ? [json()] : []} basicSetup={{ foldGutter: true, lineNumbers: true }} />}
+            <div className="response-toolbar"><div className="tab-strip" role="tablist">{(['pretty', 'raw', 'headers', 'preview'] as const).map(tab => <button key={tab} role="tab" aria-selected={responseTab === tab} onClick={() => setResponseTab(tab)} className={`tab ${responseTab === tab ? 'active' : ''}`}>{tab === 'pretty' ? 'Pretty' : tab === 'raw' ? 'Raw' : tab === 'preview' ? 'Preview' : 'Headers'}{tab === 'headers' && <span className="count-badge">{response.headers.length}</span>}</button>)}</div><div className="response-toolbar-right">{response.contentType && <span className="response-kind">{response.contentType.split(';')[0]}</span>}<button className="icon-button subtle" title="Copy response text" onClick={() => void navigator.clipboard.writeText(response.text).then(() => notify('Response copied'))}><Copy size={15} /></button></div></div>
+            {responseTab === 'preview' ? (/text\/html|application\/xhtml\+xml/i.test(response.contentType) ? <iframe className="response-preview" title="Sandboxed response preview" sandbox="" referrerPolicy="no-referrer" srcDoc={'<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:; style-src \'unsafe-inline\'; form-action \'none\'">' + response.text} /> : <div className="no-body">HTML preview is available for text/html responses only.</div>) : responseTab === 'headers' ? <div className="response-headers">{response.headers.map(header => <div className="header-line" key={header.id}><span>{header.key}</span><span>{header.value}</span></div>)}</div> : response.bodyBase64 ? <div className="binary-content"><FileJson size={30} /><strong>Binary response</strong><p>{formatBytes(response.size)} · {response.contentType || 'application/octet-stream'}</p><button className="button outlined" onClick={downloadBinary}><Download size={15} /> Download file</button></div> : <CodeMirror className="response-editor" value={responseTab === 'pretty' ? pretty : response.text} editable={false} readOnly={true} height="min(38vh, 340px)" theme={theme === 'dark' ? oneDark : 'light'} extensions={responseTab === 'pretty' ? [json()] : []} basicSetup={{ foldGutter: true, lineNumbers: true }} />}
           </> : <div className="response-placeholder"><span className="response-placeholder-icon"><Braces size={28} /></span><strong>Ready when you are</strong><p>Send a request to view the response here.<br />Status, headers, and body will appear in this panel.</p><span className="shortcut-hint"><span>Ctrl</span> + <span>Enter</span> to send</span></div>}
         </section>
         <footer className="footer"><span><span className="status-dot" /> Local-first workspace</span><div><button onClick={() => void backup()}><Download size={13} /> Export backup</button><button onClick={() => importRef.current?.click()}><Upload size={13} /> Import backup</button><button onClick={() => postmanRef.current?.click()}><Upload size={13} /> Import Postman</button>{selectedCollection && <button onClick={() => downloadJson(`${selectedCollection.name}.postman_collection.json`, exportPostmanCollection(selectedCollection, folders, requests))}><Download size={13} /> Export Postman</button>}<input type="file" ref={importRef} hidden accept="application/json,.json" onChange={e => void importBackup(e.target.files?.[0])} /><input type="file" ref={postmanRef} hidden accept="application/json,.json" onChange={e => void importPostman(e.target.files?.[0])} /></div></footer>
