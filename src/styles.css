@@ -431,3 +431,20 @@ input, textarea, select { color: var(--text); }
   .footer > div { flex-wrap:nowrap; min-width:0; width:100%; }
   .request-options .tab-strip { overflow-x:auto; scrollbar-width:thin; max-width:100%; }
 }
+
+/* Import/export actions remain discoverable without a long truncated footer. */
+.footer { overflow:visible; }
+.data-menu { position:relative; margin-left:auto; z-index:3; }
+.data-menu > summary { list-style:none; display:flex; align-items:center; gap:7px; padding:3px 8px; border-radius:6px; cursor:pointer; color:var(--text-muted); font-weight:600; }
+.data-menu > summary::-webkit-details-marker { display:none; }
+.data-menu > summary:hover, .data-menu[open] > summary { color:var(--text); background:var(--panel-raised); }
+.data-menu-popup { position:absolute; bottom:calc(100% + 6px); right:0; min-width:216px; display:grid; gap:2px; background:var(--panel-bg); padding:6px; border:1px solid var(--line); border-radius:8px; box-shadow:var(--shadow); }
+.data-menu-popup button { display:flex; justify-content:flex-start; text-align:left; gap:9px; width:100%; border:0; padding:9px 10px; border-radius:5px; color:var(--text); background:transparent; font-size:12px; }
+.data-menu-popup button:hover { color:var(--blue); background:var(--panel-raised); }
+@media (hover:hover) and (pointer:fine) {
+  .tree-heading .delete-on-hover { display:none; }
+  .tree-heading:hover .delete-on-hover, .tree-heading:focus-within .delete-on-hover { display:inline-flex; }
+}
+@media (max-width:690px) {
+  .footer { flex-direction:row; overflow:visible; }
+}
