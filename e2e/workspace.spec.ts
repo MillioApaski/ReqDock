@@ -46,7 +46,13 @@ test('mobile toolbar remains inside the viewport', async ({ page }, testInfo) =>
   await expect(theme).toBeVisible();
   const rect = await theme.boundingBox();
   expect((rect?.x || 0) + (rect?.width || 0)).toBeLessThanOrEqual(page.viewportSize()!.width + 1);
-  const first = await page.getByRole('button', { name: 'Export backup' }).boundingBox();
-  const second = await page.getByRole('button', { name: 'Import backup' }).boundingBox();
-  expect(Math.abs((first?.y || 0) - (second?.y || 0))).toBeLessThan(2);
+  const menu = page.locator('details.data-menu');
+  await expect(menu.locator('summary')).toBeVisible();
+  await menu.locator('summary').click();
+  await expect(page.getByRole('button', { name: 'Export backup' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Import backup' })).toBeVisible();
+  const popup = await page.locator('.data-menu-popup').boundingBox();
+  expect(popup).not.toBeNull();
+  expect((popup?.x || 0) + (popup?.width || 0)).toBeLessThanOrEqual(page.viewportSize()!.width + 1);
+  expect(popup?.y).toBeGreaterThanOrEqual(0);
 });
