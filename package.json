@@ -1,7 +1,7 @@
 {
   "name": "reqdock",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -18,7 +18,8 @@
     "dexie": "^4.2.1",
     "lucide-react": "^0.468.0",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "yaml": "^2.8.1"
   },
   "devDependencies": {
     "@types/node": "^22.16.0",

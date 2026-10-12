@@ -311,3 +311,15 @@ input, textarea, select { color: var(--text); }
 .script-editors { margin-top: 18px; border-top: 1px solid var(--line); padding-top: 9px; }
 .script-textarea { min-height: 95px; resize: vertical; padding: 11px; line-height: 1.5; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .response-preview { width: 100%; height: 340px; display: block; border: 0; background: #fff; }
+
+/* Request tabs are session-scoped. Closing a tab never deletes its request. */
+.request-tabbar { display:flex; align-items:stretch; min-width:0; width:100%; padding:0 16px; gap:2px; overflow-x:auto; border-bottom:1px solid var(--line); background:var(--panel-bg); scrollbar-width:thin; }
+.workspace-tab { display:flex; align-items:center; flex:0 1 205px; min-width:110px; max-width:230px; border:1px solid transparent; border-bottom:2px solid transparent; border-radius:7px 7px 0 0; }
+.workspace-tab.selected { border-color:var(--line); border-bottom-color:var(--blue); background:var(--app-bg); }
+.workspace-tab-label { display:flex; align-items:center; flex:1; gap:8px; min-width:0; padding:11px 8px 9px; border:0; background:transparent; color:var(--text); cursor:pointer; text-align:left; }
+.workspace-tab-label .request-method { flex-shrink:0; font-size:10px; }
+.workspace-tab-label .truncate { font-size:12px; }
+.workspace-tab-close, .workspace-tab-add { flex:0 0 auto; display:grid; place-items:center; border:0; border-radius:5px; color:var(--text-muted); background:transparent; cursor:pointer; padding:4px; }
+.workspace-tab-close:hover, .workspace-tab-add:hover { color:var(--text); background:var(--panel-raised); }
+.workspace-tab-add { align-self:center; padding:7px 11px; }
+@media (max-width:700px) { .request-tabbar { padding:0 8px; } .workspace-tab { flex-basis:150px; } }

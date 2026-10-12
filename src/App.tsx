@@ -13,6 +13,8 @@ import { db, persistHistory } from './lib/storage';
 import { downloadJson, readBackup } from './lib/export';
 import { exportCurl, importCurl } from './lib/curl';
 import { parsePostmanCollection, exportPostmanCollection, parsePostmanEnvironment, exportPostmanEnvironment } from './lib/postman';
+import { parseApiDefinitionText } from './lib/openapi';
+import { openTab, closeTab, restoreTabs } from './lib/tabs';
 import { evaluateAssertions, newAssertion } from './lib/assertions';
 import { runCollection, type RunResult } from './lib/runner';
 import { authorizePkce } from './lib/oauth';
@@ -42,6 +44,7 @@ export default function App() {
   const [runCollectionId, setRunCollectionId] = useState('');
   const runnerRef = useRef<AbortController | null>(null);
   const [draft, setDraft] = useState<RequestModel>(() => newRequest());
+  const [openTabIds, setOpenTabIds] = useState<string[]>([]);
   const [params, setParams] = useState<KeyValue[]>([]);
   const [environments, setEnvironments] = useState<Environment[]>([]);
   const [environmentId, setEnvironmentId] = useState('');
@@ -69,6 +72,8 @@ export default function App() {
   const abortRef = useRef<AbortController | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const postmanRef = useRef<HTMLInputElement>(null);
+  const openapiRef = useRef<HTMLInputElement>(null);
+  const tabSnapshots = useRef(new Map<string, { response: SavedResponse | null; error: string; scriptResults: ReturnType<typeof evaluateAssertions> }>());
   const latestRequestRef = useRef(draft);
   latestRequestRef.current = draft;
   const selectedEnv = environments.find(e => e.id === environmentId);
@@ -94,7 +99,12 @@ export default function App() {
         if (unassigned.length) { saved = saved.map(r => r.collectionId ? r : { ...r, collectionId: existingCollections[0].id }); await db.requests.bulkPut(saved); }
         const savedFolders = await db.folders.toArray();
         if (!mounted) return;
-        setRequests(saved); setDraft(saved[0]); setParams(paramsFromUrl(saved[0].url));
+        let storedIds: unknown = [];
+        try { storedIds = JSON.parse(sessionStorage.getItem('reqdock-tabs') || '[]'); } catch { /* session storage may be unavailable */ }
+        const opened = restoreTabs(storedIds, saved.map(r => r.id), saved[0].id);
+        const first = saved.find(r => r.id === opened[0]) || saved[0];
+        setOpenTabIds(opened);
+        setRequests(saved); setDraft(first); setParams(paramsFromUrl(first.url));
         setEnvironments(envs); setHistory(previous); setCollections(existingCollections); setFolders(savedFolders); setExpanded(existingCollections.map(c => c.id).concat(savedFolders.map(f => f.id))); setRunCollectionId(existingCollections[0].id); setReady(true);
       } catch { if (mounted) { setError('IndexedDB is unavailable. Requests will not be saved between visits.'); setReady(true); } }
     })();
@@ -102,6 +112,7 @@ export default function App() {
   }, []);
 
   useEffect(() => { if (modal !== 'sync') { setSyncKey(''); setSyncPassphrase(''); } }, [modal]);
+  useEffect(() => { if (ready && openTabIds.length) try { sessionStorage.setItem('reqdock-tabs', JSON.stringify(openTabIds)); } catch { /* private browsing */ } }, [openTabIds, ready]);
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('reqdock-theme', theme); }, [theme]);
   useEffect(() => {
     if (!ready) return;
@@ -116,9 +127,31 @@ export default function App() {
 
   const updateDraft = (patch: Partial<RequestModel>) => setDraft(old => ({ ...old, ...patch, updatedAt: Date.now() }));
   const selectRequest = (item: RequestModel) => {
+    const previous = latestRequestRef.current;
+    if (previous.id === item.id) return;
+    // Flush the in-flight editor buffer before switching. Debounced IndexedDB writes
+    // alone would otherwise lose edits when rapidly alternating between tabs.
+    tabSnapshots.current.set(previous.id, { response, error, scriptResults });
+    if (ready) {
+      void db.requests.put(previous).catch(() => setError('Could not save the previous request.'));
+      setRequests(old => old.some(r => r.id === previous.id) ? old.map(r => r.id === previous.id ? previous : r) : [...old, previous]);
+    }
+    setOpenTabIds(old => openTab(old, item.id));
+    const target = tabSnapshots.current.get(item.id);
     setUpload(undefined);
-    if (ready) void db.requests.put(latestRequestRef.current);
-    setDraft(item); setParams(paramsFromUrl(item.url)); setResponse(null); setError(''); setSidebarOpen(false);
+    setDraft(item); setParams(paramsFromUrl(item.url));
+    setResponse(target?.response || null); setScriptResults(target?.scriptResults || []); setError(target?.error || '');
+    setSidebarOpen(false);
+  };
+  const closeRequestTab = (id: string) => {
+    const outcome = closeTab(openTabIds, id);
+    if (outcome.tabs === openTabIds) return;
+    if (draft.id === id && outcome.nextId) {
+      const next = requests.find(r => r.id === outcome.nextId);
+      if (next) selectRequest(next);
+    }
+    setOpenTabIds(outcome.tabs);
+    tabSnapshots.current.delete(id);
   };
   const addRequest = (collectionId = draft.collectionId, folderId = draft.folderId) => {
     const item = { ...newRequest(), collectionId: collectionId || collections[0]?.id, folderId };
@@ -179,11 +212,15 @@ export default function App() {
   const deleteRequest = async (item: RequestModel) => {
     if (!window.confirm(`Delete "${item.name}" from local storage?`)) return;
     await db.requests.delete(item.id);
+    tabSnapshots.current.delete(item.id);
+    const closing = closeTab(openTabIds, item.id);
+    setOpenTabIds(closing.tabs.filter(id => id !== item.id));
     const remaining = requests.filter(r => r.id !== item.id);
     setRequests(remaining);
     if (draft.id === item.id) {
-      const fallback = remaining[0] || newRequest();
-      setDraft(fallback); setParams(paramsFromUrl(fallback.url));
+      const fallback = remaining.find(r => r.id === closing.nextId) || remaining[0] || newRequest();
+      setOpenTabIds(old => openTab(old, fallback.id));
+      setDraft(fallback); setParams(paramsFromUrl(fallback.url)); setResponse(null); setError('');
     }
     notify('Request deleted');
   };
@@ -207,15 +244,18 @@ export default function App() {
   const execute = useCallback(async () => {
     if (sending) { abortRef.current?.abort(); return; }
     setError(''); setResponse(null); setResponseTab('pretty'); setScriptResults([]);
+    const sentRequestId = draft.id;
+    tabSnapshots.current.set(sentRequestId, { response: null, error: '', scriptResults: [] });
     let prepared;
     let workingEnv: Environment | undefined;
     try { workingEnv = applyWorkflowScript(draft.preScript || '', selectedEnv, 'before').environment; prepared = prepareRequest(draft, workingEnv); }
-    catch (cause) { setError(cause instanceof Error ? cause.message : 'Invalid request.'); return; }
+    catch (cause) { const message = cause instanceof Error ? cause.message : 'Invalid request.'; tabSnapshots.current.set(sentRequestId, { response: null, error: message, scriptResults: [] }); if (latestRequestRef.current.id === sentRequestId) setError(message); return; }
     const controller = new AbortController(); abortRef.current = controller; setSending(true);
     try {
       const result = await sendRequest(prepared, transport, controller.signal, proxyKey, upload);
       const after = applyWorkflowScript(draft.postScript || '', workingEnv, 'after', result);
-      setResponse(result); setScriptResults(after.checks);
+      tabSnapshots.current.set(sentRequestId, { response: result, error: '', scriptResults: after.checks });
+      if (latestRequestRef.current.id === sentRequestId) { setResponse(result); setScriptResults(after.checks); }
       if (selectedEnv) await saveEnvironment(after.environment);
       const item: HistoryItem = { id: newId(), at: Date.now(), request: structuredClone(draft), status: result.status, duration: result.duration };
       void persistHistory(item).then(() => setHistory(old => [item, ...old].slice(0, 100)));
@@ -223,7 +263,8 @@ export default function App() {
       const message = controller.signal.aborted ? 'Request cancelled.' : cause instanceof TypeError && transport === 'direct'
         ? 'Network request failed. This may be a CORS restriction. Try Cloud Proxy (requires configuration) or check the URL.'
         : cause instanceof Error ? cause.message : 'Request failed.';
-      setError(message);
+      tabSnapshots.current.set(sentRequestId, { response: null, error: message, scriptResults: [] });
+      if (latestRequestRef.current.id === sentRequestId) setError(message);
       const item: HistoryItem = { id: newId(), at: Date.now(), request: structuredClone(draft), error: message };
       void persistHistory(item).then(() => setHistory(old => [item, ...old].slice(0, 100)));
     } finally { abortRef.current = null; setSending(false); }
@@ -279,6 +320,26 @@ export default function App() {
     } catch (cause) { notify(cause instanceof Error ? cause.message : 'Import failed'); }
     if (postmanRef.current) postmanRef.current.value = '';
   };
+  const importOpenApi = async (file?: File) => {
+    if (!file) return;
+    try {
+      if (file.size > 2 * 1024 * 1024) throw new Error('API definition exceeds the 2 MiB import limit.');
+      const imported = parseApiDefinitionText(await file.text());
+      await db.transaction('rw', db.collections, db.folders, db.requests, async () => {
+        await db.collections.put(imported.collection);
+        await db.folders.bulkPut(imported.folders);
+        await db.requests.bulkPut(imported.requests);
+      });
+      setCollections(old => [...old, imported.collection]);
+      setFolders(old => [...old, ...imported.folders]);
+      setRequests(old => [...old, ...imported.requests]);
+      setExpanded(old => [...old, imported.collection.id, ...imported.folders.map(f => f.id)]);
+      setRunCollectionId(imported.collection.id);
+      selectRequest(imported.requests[0]);
+      notify(`Imported ${imported.requests.length} OpenAPI operations`);
+    } catch (cause) { notify(cause instanceof Error ? cause.message : 'OpenAPI import failed'); }
+    if (openapiRef.current) openapiRef.current.value = '';
+  };
   const startRunner = async () => {
     if (running) { runnerRef.current?.abort(); return; }
     const queue = requests.filter(r => r.collectionId === runCollectionId);
@@ -321,6 +382,7 @@ export default function App() {
       setRequests(data.requests); setCollections(data.collections); setFolders(data.folders); setEnvironments(data.environments);
       setExpanded([...data.collections.map(c => c.id), ...data.folders.map(f => f.id)]);
       setRunCollectionId(data.collections[0].id); setEnvironmentId('');
+      tabSnapshots.current.clear(); setOpenTabIds([restored.id]);
       setDraft(restored); setParams(paramsFromUrl(restored.url)); setResponse(null); setError('');
       notify('Encrypted cloud snapshot restored locally');
     } catch (error) { notify(error instanceof Error ? error.message : 'Cloud restore failed'); }
@@ -394,6 +456,19 @@ export default function App() {
         <div className="topbar-left"><button className="icon-button mobile-only" aria-label="Toggle menu" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button><span className="breadcrumb">Workspace</span><span className="slash">/</span><span className="breadcrumb-current">{draft.name}</span></div>
         <div className="topbar-actions"><div className="environment-picker"><Globe2 size={15} /><select aria-label="Current environment" value={environmentId} onChange={e => setEnvironmentId(e.target.value)}><option value="">No environment</option>{environments.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}</select><ChevronDown size={13} /></div><button className="icon-button" title="Encrypted cloud sync" onClick={() => setModal('sync')}><Cloud size={17} /></button><button className="icon-button" title="Edit environments" onClick={() => setModal('environment')}><SlidersHorizontal size={17} /></button><span className="topbar-divider" /><button className="icon-button" title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}</button></div>
       </header>
+      <div className="request-tabbar" role="tablist" aria-label="Open requests">
+        {openTabIds.map(id => {
+          const item = id === draft.id ? draft : requests.find(r => r.id === id);
+          if (!item) return null;
+          return <div key={id} className={`workspace-tab ${id === draft.id ? 'selected' : ''}`}>
+            <button className="workspace-tab-label" type="button" role="tab" aria-selected={id === draft.id} title={item.url || item.name} onClick={() => selectRequest(item)}>
+              <span className={`request-method ${methodClasses[item.method]}`}>{item.method}</span><span className="truncate">{item.name}</span>
+            </button>
+            {openTabIds.length > 1 && <button className="workspace-tab-close" type="button" aria-label={`Close tab ${item.name}`} title="Close tab (does not delete request)" onClick={() => closeRequestTab(id)}><X size={13} /></button>}
+          </div>;
+        })}
+        <button className="workspace-tab-add" type="button" title="New request tab" aria-label="New request tab" onClick={() => addRequest()}><Plus size={16} /></button>
+      </div>
       <div className="content">
         <div className="content-heading"><div><div className="eyebrow">API WORKSPACE <span className="eyebrow-dot">·</span> REQUEST BUILDER</div><div className="heading-line"><input aria-label="Request name" className="request-title" value={draft.name} onChange={e => updateDraft({ name: e.target.value })} /><span className="saved-pill"><Check size={12} /> Local</span></div><p>Compose, send, and inspect HTTP requests in one place.</p><div className="request-location"><select aria-label="Request collection" value={draft.collectionId || ''} onChange={e => moveRequest(e.target.value)}>{collections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select><select aria-label="Request folder" value={draft.folderId || ''} onChange={e => moveRequest(draft.collectionId || '', e.target.value || undefined)}><option value="">Collection root</option>{folders.filter(f => f.collectionId === draft.collectionId).map(f => <option key={f.id} value={f.id}>{f.name}</option>)}</select></div></div><div className="request-actions"><button className="button outlined" onClick={() => setModal('stream')}><Activity size={15} /> Live</button><button className="button outlined" onClick={() => { setModal('runner'); setRunCollectionId(draft.collectionId || collections[0]?.id || ''); }}><Play size={15} /> Run</button><button className="button outlined" onClick={() => { void db.requests.put(draft); notify('Saved locally'); }}><Save size={15} /> Save</button><div className="dropdown"><button className="button outlined" onClick={() => setModal('curl')}><Terminal size={15} /> Import cURL</button></div><button className="icon-button" title="Copy as cURL" onClick={copyCurl}><Copy size={17} /></button></div></div>
         <section className="request-box" aria-label="Request editor">
@@ -428,7 +503,7 @@ export default function App() {
             {responseTab === 'preview' ? (/text\/html|application\/xhtml\+xml/i.test(response.contentType) ? <iframe className="response-preview" title="Sandboxed response preview" sandbox="" referrerPolicy="no-referrer" srcDoc={'<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; img-src data:; style-src \'unsafe-inline\'; form-action \'none\'">' + response.text} /> : <div className="no-body">HTML preview is available for text/html responses only.</div>) : responseTab === 'headers' ? <div className="response-headers">{response.headers.map(header => <div className="header-line" key={header.id}><span>{header.key}</span><span>{header.value}</span></div>)}</div> : response.bodyBase64 ? <div className="binary-content"><FileJson size={30} /><strong>Binary response</strong><p>{formatBytes(response.size)} · {response.contentType || 'application/octet-stream'}</p><button className="button outlined" onClick={downloadBinary}><Download size={15} /> Download file</button></div> : <CodeMirror className="response-editor" value={responseTab === 'pretty' ? pretty : response.text} editable={false} readOnly={true} height="min(38vh, 340px)" theme={theme === 'dark' ? oneDark : 'light'} extensions={responseTab === 'pretty' ? [json()] : []} basicSetup={{ foldGutter: true, lineNumbers: true }} />}
           </> : <div className="response-placeholder"><span className="response-placeholder-icon"><Braces size={28} /></span><strong>Ready when you are</strong><p>Send a request to view the response here.<br />Status, headers, and body will appear in this panel.</p><span className="shortcut-hint"><span>Ctrl</span> + <span>Enter</span> to send</span></div>}
         </section>
-        <footer className="footer"><span><span className="status-dot" /> Local-first workspace</span><div><button onClick={() => void backup()}><Download size={13} /> Export backup</button><button onClick={() => importRef.current?.click()}><Upload size={13} /> Import backup</button><button onClick={() => postmanRef.current?.click()}><Upload size={13} /> Import Postman</button>{selectedCollection && <button onClick={() => downloadJson(`${selectedCollection.name}.postman_collection.json`, exportPostmanCollection(selectedCollection, folders, requests))}><Download size={13} /> Export Postman</button>}<input type="file" ref={importRef} hidden accept="application/json,.json" onChange={e => void importBackup(e.target.files?.[0])} /><input type="file" ref={postmanRef} hidden accept="application/json,.json" onChange={e => void importPostman(e.target.files?.[0])} /></div></footer>
+        <footer className="footer"><span><span className="status-dot" /> Local-first workspace</span><div><button onClick={() => void backup()}><Download size={13} /> Export backup</button><button onClick={() => importRef.current?.click()}><Upload size={13} /> Import backup</button><button onClick={() => postmanRef.current?.click()}><Upload size={13} /> Import Postman</button><button onClick={() => openapiRef.current?.click()}><Upload size={13} /> Import OpenAPI</button>{selectedCollection && <button onClick={() => downloadJson(`${selectedCollection.name}.postman_collection.json`, exportPostmanCollection(selectedCollection, folders, requests))}><Download size={13} /> Export Postman</button>}<input type="file" ref={importRef} hidden accept="application/json,.json" onChange={e => void importBackup(e.target.files?.[0])} /><input type="file" ref={postmanRef} hidden accept="application/json,.json" onChange={e => void importPostman(e.target.files?.[0])} /><input type="file" ref={openapiRef} hidden accept="application/json,.json,.yaml,.yml,application/yaml,text/yaml" onChange={e => void importOpenApi(e.target.files?.[0])} /></div></footer>
       </div>
     </main>
     {toast && <div className="toast"><Check size={16} /> {toast}</div>}
