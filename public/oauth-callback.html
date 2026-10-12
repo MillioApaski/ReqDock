@@ -1,0 +1,6 @@
+<!doctype html><html lang="en"><head><meta charset="UTF-8"/><title>ReqDock OAuth callback</title></head><body>
+<p>Completing ReqDock authentication… You may close this window.</p>
+<script>
+  if (window.opener) { window.opener.postMessage({type: 'reqdock:oauth2', href: location.href}, location.origin); window.close(); }
+</script>
+</body></html>

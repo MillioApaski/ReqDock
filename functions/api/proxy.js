@@ -70,6 +70,7 @@ export async function onRequestPost({ request, env }) {
   const method = typeof payload.method === 'string' ? payload.method.toUpperCase() : 'GET';
   if (!METHODS.has(method)) return fail(400, 'Unsupported HTTP method.');
   if (payload.body !== undefined && typeof payload.body !== 'string') return fail(400, 'Body must be UTF-8 text.');
+  if (payload.multipart && (!Array.isArray(payload.multipart.fields) || payload.multipart.fields.length > 100 || !payload.multipart.fields.every(x => x && typeof x.name === 'string' && typeof x.value === 'string') || (payload.multipart.files && (!Array.isArray(payload.multipart.files) || payload.multipart.files.length > 1)))) return fail(400, 'Invalid multipart fields.');
   if (payload.body && new TextEncoder().encode(payload.body).byteLength > MAX_REQUEST_BYTES) return fail(413, 'Request body exceeds 1 MiB.');
   if (payload.headers && (typeof payload.headers !== 'object' || Array.isArray(payload.headers))) return fail(400, 'Invalid headers.');
   const headers = new Headers();
@@ -81,8 +82,20 @@ export async function onRequestPost({ request, env }) {
     }
   } catch { return fail(400, 'Invalid header name or value.'); }
   try {
+    let outgoingBody = ['GET', 'HEAD'].includes(method) ? undefined : payload.body;
+    if (payload.multipart) {
+      const form = new FormData();
+      for (const field of payload.multipart.fields) form.append(field.name, field.value);
+      for (const file of payload.multipart.files || []) {
+        if (!file || typeof file.name !== 'string' || typeof file.filename !== 'string' || typeof file.base64 !== 'string' || typeof file.contentType !== 'string' || file.base64.length > MAX_REQUEST_BYTES || !/^[A-Za-z0-9+/]*={0,2}$/.test(file.base64)) return fail(400, 'Invalid file upload.');
+        const bytes = Uint8Array.from(atob(file.base64), char => char.charCodeAt(0));
+        form.append(file.name, new Blob([bytes], { type: file.contentType }), file.filename);
+      }
+      headers.delete('content-type');
+      outgoingBody = form;
+    }
     const response = await fetch(url.toString(), {
-      method, headers, body: ['GET', 'HEAD'].includes(method) ? undefined : payload.body,
+      method, headers, body: outgoingBody,
       redirect: 'manual', signal: AbortSignal.timeout(25000),
       cf: { cacheTtl: 0, cacheEverything: false },
     });
