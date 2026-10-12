@@ -5,7 +5,7 @@ import { oneDark } from '@codemirror/theme-one-dark';
 import {
   Activity, ArrowDownToLine, Braces, Check, ChevronDown, Clock3, Cloud,
   Code2, Copy, Download, ExternalLink, FileJson, FolderOpen, Globe2, History,
-  Layers2, Menu, Moon, Plus, Save, Search, Send, Settings2, FolderPlus, Folder, Play,
+  Layers2, Menu, Moon, Plus, Save, Search, Send, Settings2, FolderPlus, Folder as FolderIcon, Play,
   ShieldAlert, SlidersHorizontal, Sun, Terminal, Trash2, Upload, X, Zap,
 } from 'lucide-react';
 import { PairEditor } from './components/PairEditor';
@@ -313,7 +313,7 @@ export default function App() {
   </div>;
   const renderFolders = (collectionId: string, parentId?: string, depth = 0): ReactNode => depth > 10 ? null : <>
     {folders.filter(f => f.collectionId === collectionId && f.parentId === parentId).map(folder => <div key={folder.id} className="folder-tree">
-      <div className="tree-heading" style={{ paddingLeft: 10 + depth * 12 }}><button onClick={() => toggleExpand(folder.id)}><ChevronDown className={expanded.includes(folder.id) ? '' : 'collapsed'} size={13} /><Folder size={14} /> <span className="truncate">{folder.name}</span></button><button className="icon-button subtle delete-on-hover" title="Add subfolder" onClick={() => void addFolder(collectionId, folder.id)}><FolderPlus size={13} /></button><button className="icon-button subtle delete-on-hover" title="Delete folder" onClick={() => void deleteFolder(folder)}><Trash2 size={13} /></button></div>
+      <div className="tree-heading" style={{ paddingLeft: 10 + depth * 12 }}><button onClick={() => toggleExpand(folder.id)}><ChevronDown className={expanded.includes(folder.id) ? '' : 'collapsed'} size={13} /><FolderIcon size={14} /> <span className="truncate">{folder.name}</span></button><button className="icon-button subtle delete-on-hover" title="Add subfolder" onClick={() => void addFolder(collectionId, folder.id)}><FolderPlus size={13} /></button><button className="icon-button subtle delete-on-hover" title="Delete folder" onClick={() => void deleteFolder(folder)}><Trash2 size={13} /></button></div>
       {expanded.includes(folder.id) && <div className="tree-children" style={{ paddingLeft: (depth + 1) * 10 }}>{renderFolders(collectionId, folder.id, depth + 1)}{filtered.filter(r => r.collectionId === collectionId && r.folderId === folder.id).map(renderRequest)}</div>}
     </div>)}
   </>;

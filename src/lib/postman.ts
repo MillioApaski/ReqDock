@@ -1,4 +1,4 @@
-import { blankPair, newId, newRequest, type Collection, type Environment, type Folder, type HttpMethod, type KeyValue, type RequestModel } from '../types';
+import { newId, newRequest, type Collection, type Environment, type Folder, type HttpMethod, type KeyValue, type RequestModel } from '../types';
 
 /** A deliberately strict subset of the Postman Collection v2.1 exchange format. */
 type Json = Record<string, unknown>;
@@ -35,16 +35,17 @@ export function parsePostmanCollection(value: unknown): ImportedCollection {
       req.id = newId(); req.name = asText(item.name) || req.method + ' ' + url;
       req.collectionId = collection.id; req.folderId = parentId;
       req.url = url; req.headers = pairsFrom(source.header);
-      if (isObject(source.auth)) {
-        const kind = asText(source.auth.type);
-        if (kind === 'bearer' && Array.isArray(source.auth.bearer)) {
-          const token = source.auth.bearer.find((x: unknown) => isObject(x) && x.key === 'token');
+      const authConfig = source.auth;
+      if (isObject(authConfig)) {
+        const kind = asText(authConfig.type);
+        if (kind === 'bearer' && Array.isArray(authConfig.bearer)) {
+          const token = authConfig.bearer.find((x: unknown) => isObject(x) && x.key === 'token');
           req.auth = { ...req.auth, type: 'bearer', token: isObject(token) ? asText(token.value) : '' };
-        } else if (kind === 'basic' && Array.isArray(source.auth.basic)) {
-          const get = (key: string) => { const found = source.auth.basic.find((x: unknown) => isObject(x) && x.key === key); return isObject(found) ? asText(found.value) : ''; };
+        } else if (kind === 'basic' && Array.isArray(authConfig.basic)) {
+          const get = (key: string) => { const found = authConfig.basic.find((x: unknown) => isObject(x) && x.key === key); return isObject(found) ? asText(found.value) : ''; };
           req.auth = { ...req.auth, type: 'basic', username: get('username'), password: get('password') };
-        } else if (kind === 'apikey' && Array.isArray(source.auth.apikey)) {
-          const get = (key: string) => { const found = source.auth.apikey.find((x: unknown) => isObject(x) && x.key === key); return isObject(found) ? asText(found.value) : ''; };
+        } else if (kind === 'apikey' && Array.isArray(authConfig.apikey)) {
+          const get = (key: string) => { const found = authConfig.apikey.find((x: unknown) => isObject(x) && x.key === key); return isObject(found) ? asText(found.value) : ''; };
           req.auth = { ...req.auth, type: 'api-key', key: get('key'), value: get('value'), location: get('in') === 'query' ? 'query' : 'header' };
         }
       }
