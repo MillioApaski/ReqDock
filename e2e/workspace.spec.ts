@@ -38,3 +38,15 @@ test('keyboard splitter resizing is persisted after reload', async ({ page }, te
   await expect(separator).toHaveAttribute('aria-valuenow', String(initial + 5));
   await page.screenshot({ path: `test-results/${testInfo.project.name}-resized.png` });
 });
+
+test('mobile toolbar remains inside the viewport', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile', 'Mobile-specific layout');
+  await page.goto('/');
+  const theme = page.getByTitle('Switch to light theme');
+  await expect(theme).toBeVisible();
+  const rect = await theme.boundingBox();
+  expect((rect?.x || 0) + (rect?.width || 0)).toBeLessThanOrEqual(page.viewportSize()!.width + 1);
+  const first = await page.getByRole('button', { name: 'Export backup' }).boundingBox();
+  const second = await page.getByRole('button', { name: 'Import backup' }).boundingBox();
+  expect(Math.abs((first?.y || 0) - (second?.y || 0))).toBeLessThan(2);
+});
