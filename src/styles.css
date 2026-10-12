@@ -274,3 +274,37 @@ input, textarea, select { color: var(--text); }
   .response-kind { max-width: 110px; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
   .footer { flex-direction: column; gap: 15px; }
 }
+/* Collection tree and v0.2 workspace extensions */
+.sidebar-actions { display: flex; align-items: center; }
+.sidebar-actions .icon-button { width: 26px; }
+.collection-tree { margin: 4px 0 12px; }
+.tree-heading { display: flex; align-items: center; gap: 4px; min-height: 34px; border-radius: 6px; }
+.tree-heading:hover { background: var(--panel-raised); }
+.tree-heading > button:first-child { flex: 1; display: flex; align-items: center; gap: 7px; padding: 5px 4px; color: var(--text); background: none; border: none; text-align: left; min-width: 0; font-size: 12px; font-weight: 650; }
+.tree-heading svg.collapsed { transform: rotate(-90deg); }
+.tree-heading > button:first-child svg:not(:first-child) { color: var(--blue); }
+.tree-heading:hover .delete-on-hover { opacity: 1; }
+.tree-children { padding-left: 10px; }
+.tree-children .request-list-item { padding-left: 3px; }
+.request-location { display: flex; align-items: center; gap: 7px; margin-top: 10px; }
+.request-location select { border: 1px solid var(--line); border-radius: 5px; background: var(--field-bg); color: var(--text-muted); max-width: 160px; min-width: 0; padding: 4px 6px; font-size: 11px; }
+.assertion-row { display: grid; grid-template-columns: 160px 1fr 1fr 30px; gap: 8px; margin-bottom: 8px; align-items: center; }
+.assertion-results { border-top: 1px solid var(--line); margin-top: 16px; padding-top: 12px; display: grid; gap: 8px; }
+.assertion-results small { display: block; color: var(--text-subtle); font-size: 11px; }
+.run-results { margin-top: 15px; max-height: 320px; overflow-y: auto; }
+.run-line { display: flex; justify-content: space-between; align-items: center; gap: 16px; border-bottom: 1px solid var(--line-soft); padding: 10px 4px; font-size: 12px; }
+.run-line span { font-size: 11px; text-align: right; }
+.graphql-variables { display: block; min-height: 90px; padding: 9px; resize: vertical; font-family: ui-monospace, monospace; }
+@media(max-width: 650px){ .assertion-row { grid-template-columns: 1fr 1fr 28px; } .assertion-row input:nth-of-type(2) { grid-column: 1 / 3; } .sidebar-actions .icon-button { width: 23px; } .footer > div { flex-wrap: wrap; } }
+.file-upload-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 10px; }
+.file-upload-row > .form-input { max-width: 160px; }
+.file-upload-row > span { font-size: 11px; color: var(--text-subtle); }
+.stream-controls { display: grid; grid-template-columns: 155px minmax(150px,1fr) auto; gap: 8px; }
+.stream-events { height: 260px; border: 1px solid var(--line); background: var(--editor-bg); border-radius: 7px; margin-top: 12px; overflow-y: auto; padding: 9px; }
+.stream-entry { border-bottom: 1px solid var(--line-soft); padding: 6px 4px; }
+.stream-entry small { color: var(--text-subtle); font-size: 10px; }
+.stream-entry pre { color: var(--text); margin: 4px 0; overflow-wrap: anywhere; white-space: pre-wrap; font-size: 11px; }
+.stream-entry.stream-info pre { color: var(--blue); }
+.stream-entry.stream-out pre { color: var(--yellow); }
+.stream-send { margin-top: 10px; display: flex; gap: 8px; }
+@media(max-width: 600px) { .stream-controls { display: flex; flex-wrap: wrap; } .stream-controls .form-input { flex: 1 1 180px; } }

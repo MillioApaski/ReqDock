@@ -25,7 +25,7 @@ export function setUrlParams(url: string, pairs: KeyValue[]): string {
 function toBase64(text: string): string {
   return btoa(Array.from(new TextEncoder().encode(text), byte => String.fromCharCode(byte)).join(''));
 }
-export type PreparedRequest = { url: string; method: HttpMethod; headers: Record<string, string>; body?: string };
+export type PreparedRequest = { url: string; method: HttpMethod; headers: Record<string, string>; body?: string; multipart?: { fields: { name: string; value: string }[]; files?: { name: string; filename: string; contentType: string; base64: string }[] } }; 
 export function prepareRequest(request: RequestModel, environment?: Environment): PreparedRequest {
   let url = interpolate(request.url.trim(), environment);
   if (!url) throw new Error('Enter a request URL first.');
@@ -35,7 +35,7 @@ export function prepareRequest(request: RequestModel, environment?: Environment)
   const headers: Record<string, string> = {};
   request.headers.filter(h => h.enabled && h.key.trim()).forEach(h => { headers[interpolate(h.key.trim(), environment)] = interpolate(h.value, environment); });
   const auth = request.auth;
-  if (auth.type === 'bearer' && auth.token) headers.Authorization = `Bearer ${interpolate(auth.token, environment)}`;
+  if ((auth.type === 'bearer' || auth.type === 'oauth2') && auth.token) headers.Authorization = `Bearer ${interpolate(auth.token, environment)}`;
   if (auth.type === 'basic') headers.Authorization = `Basic ${toBase64(`${interpolate(auth.username, environment)}:${interpolate(auth.password, environment)}`)}`;
   if (auth.type === 'api-key' && auth.key) {
     if (auth.location === 'header') headers[interpolate(auth.key, environment)] = interpolate(auth.value, environment);
@@ -45,6 +45,10 @@ export function prepareRequest(request: RequestModel, environment?: Environment)
   let body: string | undefined;
   if (!['GET', 'HEAD'].includes(request.method) && request.bodyType !== 'none') {
     body = interpolate(request.body, environment);
+    if (request.bodyType === 'form-data') {
+      const rows = parseFormRows(body);
+      return { url, method: request.method, headers, multipart: { fields: rows } };
+    }
     if (request.bodyType === 'urlencoded') {
       const items = new URLSearchParams();
       body.split('\n').filter(Boolean).forEach(line => {
@@ -53,11 +57,21 @@ export function prepareRequest(request: RequestModel, environment?: Environment)
       });
       body = items.toString();
       if (!('Content-Type' in headers) && !('content-type' in headers)) headers['Content-Type'] = 'application/x-www-form-urlencoded';
+    } else if (request.bodyType === 'graphql') {
+      body = JSON.stringify({ query: body, variables: request.graphqlVariables ? JSON.parse(interpolate(request.graphqlVariables, environment)) : {} });
+      if (!Object.keys(headers).some(h => h.toLowerCase() === 'content-type')) headers['Content-Type'] = 'application/json';
     } else if (request.bodyType === 'json') {
       if (!('Content-Type' in headers) && !('content-type' in headers)) headers['Content-Type'] = 'application/json';
     } else if (!('Content-Type' in headers) && !('content-type' in headers)) headers['Content-Type'] = 'text/plain;charset=UTF-8';
   }
   return { url, method: request.method, headers, body };
+}
+export function parseFormRows(input: string): { name: string; value: string }[] {
+  return input.split('\n').filter(Boolean).map(line => {
+    const eq = line.indexOf('=');
+    if (eq <= 0) throw new Error('Form-data fields must have name=value on each line.');
+    return { name: line.slice(0, eq).trim(), value: line.slice(eq + 1) };
+  });
 }
 export function formatJson(input: string): string {
   try { return JSON.stringify(JSON.parse(input), null, 2); } catch { return input; }
@@ -77,8 +91,14 @@ export function decodeBase64(base64: string): Uint8Array {
   return bytes;
 }
 const MAX_RESPONSE = 2 * 1024 * 1024;
-export async function sendRequest(prepared: PreparedRequest, transport: Transport, signal: AbortSignal, proxyKey: string): Promise<SavedResponse> {
+export async function sendRequest(prepared: PreparedRequest, transport: Transport, signal: AbortSignal, proxyKey: string, attachment?: { fieldName: string; file: File }): Promise<SavedResponse> {
   const start = performance.now();
+  if (attachment && !prepared.multipart) throw new Error('Select form-data to attach a file.');
+  if (attachment && attachment.file.size > 700 * 1024 && transport === 'proxy') throw new Error('Cloud Proxy file uploads are limited to 700 KiB due to JSON encoding.');
+  if (transport === 'proxy' && attachment && prepared.multipart) {
+    const bytes = new Uint8Array(await attachment.file.arrayBuffer());
+    prepared = { ...prepared, multipart: { ...prepared.multipart, files: [{ name: attachment.fieldName, filename: attachment.file.name, contentType: attachment.file.type || 'application/octet-stream', base64: bytesToBase64(bytes) }] } };
+  }
   if (transport === 'proxy') {
     const response = await fetch('/api/proxy', {
       method: 'POST', signal, headers: { 'Content-Type': 'application/json', ...(proxyKey ? { 'X-ReqDock-Proxy-Key': proxyKey } : {}) },
@@ -88,7 +108,16 @@ export async function sendRequest(prepared: PreparedRequest, transport: Transpor
     if (!response.ok) throw new Error(result.error || `Proxy error (${response.status})`);
     return { ...result, duration: Math.round(performance.now() - start) };
   }
-  const response = await fetch(prepared.url, { method: prepared.method, headers: prepared.headers, body: prepared.body, signal });
+  const headers = { ...prepared.headers };
+  let body: BodyInit | undefined = prepared.body;
+  if (prepared.multipart) {
+    const form = new FormData();
+    for (const field of prepared.multipart.fields) form.append(field.name, field.value);
+    if (attachment) form.append(attachment.fieldName, attachment.file, attachment.file.name);
+    Object.keys(headers).filter(h => h.toLowerCase() === 'content-type').forEach(h => delete headers[h]);
+    body = form;
+  }
+  const response = await fetch(prepared.url, { method: prepared.method, headers, body, signal });
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (bytes.byteLength > MAX_RESPONSE) throw new Error('Response exceeds the 2 MiB preview limit.');
   const contentType = response.headers.get('content-type') || '';

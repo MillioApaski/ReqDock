@@ -2,18 +2,21 @@
 
 **A local-first API workspace for the web.** Build, send, and inspect HTTP requests in a lightweight browser client. Deploy the UI on Cloudflare Pages, with an optional locked-down Pages Functions proxy.
 
-> Early preview (v0.1). This is not a full Postman replacement yet.
+> Development preview (v0.2). A browser-based API client, not a drop-in replacement for every Postman feature.
 
 ## Features
 
 - GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS requests
 - Query params, custom headers, JSON/text/x-www-form-urlencoded bodies
 - Bearer Token, Basic Auth, and API Key authorization
-- Request collections, editable names, history (last 100), and local persistence using IndexedDB
+- Collections, nested folders, request naming and moving, history (last 100), and IndexedDB persistence
 - Environments and `{{variable}}` interpolation, plus `{{$timestamp}}` and `{{$guid}}`
 - Syntax-highlighted response and JSON folding with CodeMirror; raw response and header views
 - Direct browser requests and optional Cloudflare Pages Functions proxy
-- cURL command import / export and ReqDock JSON backup import / export
+- cURL import / export, Postman Collection v2.1 and Environment import/export, ReqDock v1/v2 JSON backups
+- Collection Runner with sequential HTTP requests, safe declarative response assertions and JSON reports
+- GraphQL POST bodies with JSON variables, multipart/form-data text fields and one transient file attachment
+- OAuth 2.0 Authorization Code + PKCE (public clients), direct WebSocket and SSE debugging with log export
 - Dark/light theme and responsive layout
 
 ## Quick start
@@ -60,10 +63,14 @@ The proxy refuses all requests until configured, and is restricted to exact allo
 ## Known limitations
 
 - Direct-mode requests can fail because of CORS, mixed-content restrictions, or browser networking rules. Cloud Proxy cannot reach `localhost`, RFC1918 addresses, or private services.
-- No multipart file upload, OAuth 2.0 workflow, pre-request scripts, collection runner, WebSocket, GraphQL specialist UI, or Postman Collection import yet.
+- Multipart uploads have a **one-file-per-request** UI for now; files remain memory-only and are not persisted, included in imports/exports, or replayed by Collection Runner. Cloud Proxy uploads are limited to approximately 700 KiB because files are base64 encoded into a 1 MiB capped JSON payload.
+- OAuth 2.0 supports **Authorization Code + PKCE** only. Register `<your-origin>/oauth-callback.html` with the provider. Token endpoints must enable browser CORS or be allowlisted for the Cloud Proxy. Tokens are not auto-refreshed.
+- Browser WebSocket connections cannot set arbitrary headers. SSE supports browser-direct streaming only; Cloud Proxy does not stream SSE.
+- Assertion rules are simple declarative checks for status, duration, header, JSON path and substring; no arbitrary Postman JavaScript sandbox or pre-request scripts.
+- No multi-user cloud synchronization, scheduled collection runs, gRPC, built-in local-network agent, or complete Postman scripting compatibility. Collection v2.1 import/export is intentionally a subset: unsupported auth types, scripts and unsupported body modes are not round-tripped.
 - The proxy reads a response into a capped preview buffer, rather than streaming arbitrary-sized downloads.
 - cURL import supports common portable options and explicitly rejects unsupported switches.
-- Workspace data is per-browser; there is no cloud sync or account system.
+- Workspace data is per-browser; there is no cloud sync or account system. Existing v0.1 database and backup data are migrated forward automatically.
 
 ## Stack
 
@@ -80,7 +87,7 @@ The `functions/api/proxy.js` file is a Cloudflare Pages Function and does not re
 
 ## AI generation disclosure
 
-Code and documentation are generated and maintained with assistance from **OpenAI GPT-6**.
+Code and documentation are generated and maintained with assistance from **OpenAI GPT-6 Sol**.
 
 ## License
 
