@@ -3,6 +3,20 @@ import { newId, newRequest, type Collection, type Environment, type Folder, type
 /** A deliberately strict subset of the Postman Collection v2.1 exchange format. */
 type Json = Record<string, unknown>;
 const isObject = (v: unknown): v is Json => !!v && typeof v === 'object' && !Array.isArray(v);
+const parseEvents = (events:unknown): { preScript?:string; postScript?:string } => {
+  if(!Array.isArray(events)) return {};
+  const scripts:{preScript?:string;postScript?:string}={};
+  for(const event of events){
+    if(!isObject(event)||!isObject(event.script)) continue;
+    const exec=event.script.exec;
+    const source=Array.isArray(exec)?exec.filter((x):x is string=>typeof x==='string').join('\n')
+      :typeof exec==='string'?exec:'';
+    if(!source) continue;
+    if(event.listen==='prerequest') scripts.preScript=[scripts.preScript,source].filter(Boolean).join('\n');
+    else if(event.listen==='test') scripts.postScript=[scripts.postScript,source].filter(Boolean).join('\n');
+  }
+  return scripts;
+};
 const pair = (key: string, value: string, enabled = true): KeyValue => ({ id: newId(), key, value, enabled });
 const asText = (v: unknown): string => typeof v === 'string' ? v : '';
 const pairsFrom = (value: unknown): KeyValue[] => Array.isArray(value) ? value.filter(isObject).map(x => pair(asText(x.key), asText(x.value), !x.disabled)) : [];
@@ -59,6 +73,12 @@ export function parsePostmanCollection(value: unknown): ImportedCollection {
           req.bodyType = 'urlencoded'; req.body = pairsFrom(source.body.urlencoded).filter(p => p.enabled).map(p => `${p.key}=${p.value}`).join('\n');
         }
       } else req.bodyType = 'none';
+      const events = parseEvents(item.event);
+      if(events.preScript || events.postScript) {
+        req.scriptLanguage = 'postman';
+        req.preScript = events.preScript;
+        req.postScript = events.postScript;
+      }
       requests.push(req);
     }
   }
@@ -81,7 +101,12 @@ export function exportPostmanCollection(collection: Collection, folders: Folder[
     const body = req.bodyType === 'none' ? undefined : req.bodyType === 'urlencoded'
       ? { mode: 'urlencoded', urlencoded: req.body.split('\n').filter(Boolean).map(line => { const i = line.indexOf('='); return { key: line.slice(0, i), value: line.slice(i + 1) }; }) }
       : { mode: 'raw', raw: req.body, options: { raw: { language: req.bodyType === 'json' ? 'json' : 'text' } } };
-    return { name: req.name, request: { method: req.method, url: req.url, header: headers, ...(auth ? { auth } : {}), ...(body ? { body } : {}) } };
+    const event = req.scriptLanguage === 'postman' ? [
+      ...(req.preScript ? [{listen:'prerequest',script:{type:'text/javascript',exec:req.preScript.split('\n')}}] : []),
+      ...(req.postScript ? [{listen:'test',script:{type:'text/javascript',exec:req.postScript.split('\n')}}] : []),
+    ] : [];
+    return { name: req.name, request: { method: req.method, url: req.url, header: headers, ...(auth ? { auth } : {}), ...(body ? { body } : {}) },
+      ...(event.length ? {event} : {}) };
   };
   const descendants = (parentId?: string, depth = 0): Json[] => {
     if (depth > 20) return [];
