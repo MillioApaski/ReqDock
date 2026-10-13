@@ -1,5 +1,7 @@
 # ReqDock
 
+> **v1.3 Complete workspace backups:** ReqDock JSON v3 backups and encrypted Cloudflare D1 snapshots now include saved gRPC RPCs, including imported Proto definitions and Metadata. Backward-compatible with v1/v2 backups. Cookie Jar and ephemeral Agent tokens remain excluded.
+
 > **v1.2 gRPC Client/Bidirectional Streaming:** Interactive RPC sessions via loopback Local Agent. Start, repeatedly send JSON messages, Half-close sending, and Cancel. Bidirectional response events stream incrementally. Sessions are memory-only, use the existing origin/token/host security policy, and expire after 40 seconds (gRPC deadline: 25 seconds).
 
 > **v1.1 gRPC Server Streaming + saved RPC requests:** Receive incremental server-stream messages with cancel/timeout/bounds. Save gRPC request definitions into local Collections (IndexedDB), reopen and edit them. Local Agent pair tokens are never stored. Client/bidi streams and gRPC Runner remain unsupported.
@@ -246,3 +248,16 @@ authentication secrets; all commands require the same ephemeral pairing token.
 Up to 8 sessions per Agent process, 100 messages, 2 MiB per-direction preview and a
 25-second RPC deadline. Stream sessions are not persisted; only saved RPC definitions are.
 Update and restart the Local Agent to enable the new routes.
+
+
+## gRPC backups (v1.3)
+ReqDock local JSON backup **v3** includes saved gRPC RPC definitions (target, Service, Method, Proto
+and dependencies, JSON message and metadata, streaming mode) alongside existing HTTP requests,
+Collections and environments. Older v1/v2 backups can still be imported. Import merges matching IDs,
+consistent with the existing HTTP backup import workflow. Cloud backup now uses the same v3
+payload *inside the existing AES-256-GCM encrypted envelope*. Restoring a cloud snapshot **replaces**
+local gRPC RPCs too (older snapshots have none).
+
+**Important:** Metadata may contain API credentials. Downloaded JSON exports are not encrypted
+and should be protected accordingly. Agent pairing tokens and Cookie Jar data remain excluded.
+Existing Cloudflare D1 schema and Pages configuration do not need changes.

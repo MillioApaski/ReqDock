@@ -162,3 +162,25 @@ test('gRPC interactive streaming shows send, half-close and cancel controls', as
   await expect(dialog.getByText('Saved to collection.')).toBeVisible();
   await expect(dialog.getByRole('combobox', { name:'gRPC call mode' })).toHaveValue('client-stream');
 });
+
+
+test('exported ReqDock JSON v3 backup contains saved gRPC definitions', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name:'gRPC Console' }).click();
+  const dialog = page.getByRole('dialog', { name:'gRPC Console' });
+  await dialog.getByRole('textbox', { name:'Saved gRPC name' }).fill('Exportable RPC');
+  await dialog.getByRole('combobox', { name:'gRPC call mode' }).selectOption('bidi');
+  await dialog.getByRole('button', { name:'Save', exact:true }).click();
+  await expect(dialog.getByText('Saved to collection.')).toBeVisible();
+  await dialog.getByTitle('Close').click();
+  const download = page.waitForEvent('download');
+  await page.locator('details.data-menu > summary').click();
+  await page.getByRole('button', { name:'Export backup' }).click();
+  const file = await download;
+  const stream = await file.createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  const content = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  expect(content.version).toBe(3);
+  expect(content.grpcRequests).toEqual([expect.objectContaining({name:'Exportable RPC',callMode:'bidi'})]);
+});
