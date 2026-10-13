@@ -106,7 +106,9 @@ export async function onRequestPost({ request, env }) {
     catch { return fail(413, 'Response is larger than the 2 MiB preview limit.'); }
     const contentType = response.headers.get('content-type') || '';
     const textual = isText(contentType);
+    const setCookies = typeof response.headers.getSetCookie === 'function' ? response.headers.getSetCookie() : (response.headers.get('set-cookie') ? [response.headers.get('set-cookie')] : []);
     return Response.json({
+      setCookies,
       status: response.status, statusText: response.statusText, contentType,
       headers: [...response.headers].map(([key, value]) => ({ id: crypto.randomUUID(), key, value, enabled: true })),
       text: textual ? new TextDecoder().decode(bytes) : '',

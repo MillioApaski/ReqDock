@@ -21,3 +21,32 @@ describe('collection runner variable chaining', () => {
     expect(environment.variables).toHaveLength(0);
   });
 });
+
+
+describe('proxy cookie chaining', () => {
+  it('passes upstream login cookies only to later requests on the same host', async () => {
+    const first = exampleRequest(); first.url = 'https://api.example.com/login';
+    const second = exampleRequest(); second.url = 'https://api.example.com/profile';
+    const other = exampleRequest(); other.url = 'https://other.example.com/profile';
+    const seen: Array<{ url: string; headers: Record<string, string> }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, options: RequestInit) => {
+      const outgoing = JSON.parse(String(options.body));
+      seen.push(outgoing);
+      return Response.json({
+        status: 200, statusText: 'OK', headers: [], text: '{}',
+        contentType: 'application/json', duration: 0, size: 2,
+        setCookies: outgoing.url.endsWith('/login') ? ['sid=secret; Secure; Path=/'] : [],
+      });
+    }));
+    const captured: Array<{ name: string; domain: string }> = [];
+    const results = await runCollection([first, second, other], undefined, 'proxy', 'key', new AbortController().signal,
+      undefined, undefined, { cookies: [], onChange: async updated => {
+        captured.splice(0, captured.length, ...updated.map(x => ({ name:x.name, domain:x.domain })));
+      } });
+    expect(results).toHaveLength(3);
+    expect(captured).toEqual([{ name: 'sid', domain: 'api.example.com' }]);
+    expect(seen[0].headers.Cookie).toBeUndefined();
+    expect(seen[1].headers.Cookie).toBe('sid=secret');
+    expect(seen[2].headers.Cookie).toBeUndefined();
+  });
+});

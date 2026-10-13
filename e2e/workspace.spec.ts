@@ -56,3 +56,27 @@ test('mobile toolbar remains inside the viewport', async ({ page }, testInfo) =>
   expect((popup?.x || 0) + (popup?.width || 0)).toBeLessThanOrEqual(page.viewportSize()!.width + 1);
   expect(popup?.y).toBeGreaterThanOrEqual(0);
 });
+
+
+test('proxy cookie jar is opt-in and persists locally without using network', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('textbox', { name: 'Request URL' })).toBeVisible();
+  await page.getByRole('textbox', { name: 'Request URL' }).fill('https://api.example.com/auth');
+  await page.getByRole('button', { name: 'Cookie Jar' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Cookie Jar' });
+  await expect(dialog).toBeVisible();
+  const toggle = dialog.getByRole('checkbox', { name: 'Enable Cloud Proxy cookie capture and sending' });
+  await expect(toggle).not.toBeChecked();
+  await dialog.getByRole('textbox', { name: 'Cookie name' }).fill('qa-session');
+  await dialog.getByLabel('Cookie value').fill('secret-123');
+  await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(dialog.getByText('qa-session')).toBeVisible();
+  await toggle.check();
+  await dialog.getByRole('button', { name: 'Done' }).click();
+  await page.reload();
+  await page.getByRole('button', { name: 'Cookie Jar' }).click();
+  await expect(dialog.getByText('qa-session')).toBeVisible();
+  await expect(toggle).toBeChecked();
+  await dialog.getByRole('button', { name: 'Delete cookie qa-session' }).click();
+  await expect(dialog.getByText('qa-session')).toHaveCount(0);
+});
