@@ -203,7 +203,7 @@ test('Collection Runner offers distinct HTTP and gRPC queues',async({page})=>{
 
 test('Postman script editor is opt-in and keeps safe DSL as the default', async ({page})=>{
   await page.goto('/');
-  await page.getByRole('button',{name:'Tests',exact:true}).click();
+  await page.getByRole('tab',{name:'Tests',exact:true}).click();
   const language=page.getByRole('combobox',{name:'Script language'});
   await expect(language).toHaveValue('dsl');
   await language.selectOption('postman');
