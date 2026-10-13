@@ -37,6 +37,7 @@ export type GrpcRequestPreset = {
   method: string;
   message: string;
   metadata: string;
+  callMode: 'unary' | 'server-stream';
 };
 export type Collection = { id: string; name: string; createdAt: number };
 export type Folder = { id: string; name: string; collectionId: string; parentId?: string };
