@@ -127,6 +127,9 @@ export async function runGrpcCollection(
         const eventsPromise = fetch(base + '/events', {
           headers: {'X-ReqDock-Agent-Token':agentToken}, signal, cache:'no-store',
         });
+        // Attach a rejection handler immediately: the server could reject the
+        // subscription before the first queued message is submitted.
+        void eventsPromise.catch(() => {});
         try {
           for (const message of messages) {
             if (signal.aborted) throw Error('Cancelled');

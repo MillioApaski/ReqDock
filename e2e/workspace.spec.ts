@@ -184,3 +184,18 @@ test('exported ReqDock JSON v3 backup contains saved gRPC definitions', async ({
   expect(content.version).toBe(3);
   expect(content.grpcRequests).toEqual([expect.objectContaining({name:'Exportable RPC',callMode:'bidi'})]);
 });
+
+
+test('Collection Runner offers distinct HTTP and gRPC queues',async({page})=>{
+  await page.goto('/');
+  await page.getByRole('button',{name:'Run',exact:true}).click();
+  const dialog=page.getByRole('dialog',{name:'Collection runner'});
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('button',{name:'HTTP',exact:true})).toHaveClass(/active/);
+  await dialog.getByRole('button',{name:'gRPC',exact:true}).click();
+  await expect(dialog.getByRole('button',{name:'gRPC',exact:true})).toHaveClass(/active/);
+  await expect(dialog.getByText('Requires the paired Local Agent.',{exact:false})).toBeVisible();
+  await expect(dialog.getByRole('button',{name:'Export report'})).toBeDisabled();
+  await dialog.getByRole('button',{name:'HTTP',exact:true}).click();
+  await expect(dialog.getByRole('button',{name:'HTTP',exact:true})).toHaveClass(/active/);
+});
