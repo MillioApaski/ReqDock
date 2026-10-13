@@ -68,7 +68,7 @@ test('proxy cookie jar is opt-in and persists locally without using network', as
   const toggle = dialog.getByRole('checkbox', { name: 'Enable Cloud Proxy cookie capture and sending' });
   await expect(toggle).not.toBeChecked();
   await dialog.getByRole('textbox', { name: 'Cookie name' }).fill('qa-session');
-  await dialog.getByRole('textbox', { name: 'Cookie value' }).fill('secret-123');
+  await dialog.getByLabel('Cookie value').fill('secret-123');
   await dialog.getByRole('button', { name: 'Add', exact: true }).click();
   await expect(dialog.getByText('qa-session')).toBeVisible();
   await toggle.check();
