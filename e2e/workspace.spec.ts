@@ -145,3 +145,20 @@ test('saved gRPC RPC is listed in Collections and restored after reload', async 
   await expect(restored.getByRole('textbox', { name:'Saved gRPC name' })).toHaveValue('Demo Watch');
   await expect(restored.getByRole('combobox', { name:'gRPC call mode' })).toHaveValue('server-stream');
 });
+
+
+test('gRPC interactive streaming shows send, half-close and cancel controls', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name:'gRPC Console' }).click();
+  const dialog=page.getByRole('dialog', { name:'gRPC Console' });
+  await dialog.getByRole('combobox', { name:'gRPC call mode' }).selectOption('bidi');
+  await expect(dialog.getByRole('button', { name:'Start session' })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name:'Send message' })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name:'Half-close' })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name:'Cancel' })).toBeDisabled();
+  await dialog.getByRole('combobox', { name:'gRPC call mode' }).selectOption('client-stream');
+  await dialog.getByRole('textbox', { name:'Saved gRPC name' }).fill('Streaming preset');
+  await dialog.getByRole('button', { name:'Save', exact:true }).click();
+  await expect(dialog.getByText('Saved to collection.')).toBeVisible();
+  await expect(dialog.getByRole('combobox', { name:'gRPC call mode' })).toHaveValue('client-stream');
+});
