@@ -1,5 +1,7 @@
 # ReqDock
 
+> **v1.2 gRPC Client/Bidirectional Streaming:** Interactive RPC sessions via loopback Local Agent. Start, repeatedly send JSON messages, Half-close sending, and Cancel. Bidirectional response events stream incrementally. Sessions are memory-only, use the existing origin/token/host security policy, and expire after 40 seconds (gRPC deadline: 25 seconds).
+
 > **v1.1 gRPC Server Streaming + saved RPC requests:** Receive incremental server-stream messages with cancel/timeout/bounds. Save gRPC request definitions into local Collections (IndexedDB), reopen and edit them. Local Agent pair tokens are never stored. Client/bidi streams and gRPC Runner remain unsupported.
 
 > **v1.0 gRPC schema discovery:** Supports multi-file Proto imports (including folder selection) and gRPC reflection using the paired Local Agent. No imported Proto is read from the Agent filesystem. Reflection requires the destination service to enable standard reflection, and reuses the Agent allowlist and TLS policy.
@@ -228,3 +230,19 @@ The Agent pairing token is **never** saved. Proto source, JSON request and metad
 do not use on a shared or untrusted browser. Saved gRPC definitions are currently
 not included in existing JSON workspace backups or D1 cloud snapshots, and
 the HTTP Collection Runner does not execute them.
+
+
+## Interactive gRPC streaming (v1.2)
+
+Select **Client Streaming** or **Bidirectional Streaming** in the gRPC console.
+**Start session**, send one or more JSON messages using **Send message**, then use **Half-close**
+to finish writing to the server. For bidirectional methods, responses appear as they arrive;
+client-streaming methods return one response when the send side is half-closed.
+**Cancel** aborts the RPC. Closing the console also aborts the response subscription,
+which cancels the upstream gRPC call.
+
+The Agent uses authenticated, origin-restricted, short-lived in-memory sessions. IDs are not
+authentication secrets; all commands require the same ephemeral pairing token.
+Up to 8 sessions per Agent process, 100 messages, 2 MiB per-direction preview and a
+25-second RPC deadline. Stream sessions are not persisted; only saved RPC definitions are.
+Update and restart the Local Agent to enable the new routes.
