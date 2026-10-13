@@ -4,7 +4,7 @@
 
 **A local-first API workspace for the web.** Build, send, and inspect HTTP requests in a lightweight browser client. Deploy the UI on Cloudflare Pages, with an optional locked-down Pages Functions proxy.
 
-> Development preview (v0.6). A practical local-first API client, not a protocol-level replacement for every Postman feature.
+> Development preview (v0.7). A practical local-first API client, not a protocol-level replacement for every Postman feature.
 
 ## Features
 
@@ -14,7 +14,7 @@
 - Request collections, nested folders, session-scoped multi-request tabs, history (last 100), and local persistence using IndexedDB
 - Environments and `{{variable}}` interpolation, plus `{{$timestamp}}` and `{{$guid}}`
 - Syntax-highlighted response and JSON folding with CodeMirror; raw response, headers and sandboxed HTML preview
-- Direct browser requests and optional Cloudflare Pages Functions proxy
+- Direct browser requests and optional Cloudflare Pages Functions proxy; opt-in host-scoped Cookie Jar (Proxy mode only)
 - cURL commands, Postman Collection v2.1, Postman environments, and OpenAPI 3.0/3.1 JSON/YAML import; ReqDock JSON backups and Postman Collection export
 - Collection Runner, response assertions, sequential environment capture and safe request/response workflow scripting
 - GraphQL, multipart file upload, OAuth 2.0 Authorization Code + PKCE, WebSocket and Server-Sent Events consoles

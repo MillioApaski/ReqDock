@@ -273,7 +273,7 @@ export default function App() {
       const url = new URL(draft.url);
       const cookie = parseSetCookie(newCookieName + '=' + newCookieValue + '; Path=/', url.toString());
       if (!cookie) { notify('Invalid cookie name or value'); return; }
-      await persistCookies([...cookies.filter(item => item.id !== cookie.id), cookie]);
+      await persistCookies(applySetCookies(cookies, url.toString(), [newCookieName + '=' + newCookieValue + '; Path=/']));
       setNewCookieName(''); setNewCookieValue(''); notify('Cookie saved locally');
     } catch { notify('Enter a valid absolute request URL before adding a cookie'); }
   };
@@ -294,7 +294,8 @@ export default function App() {
     try {
       const result = await sendRequest(prepared, transport, controller.signal, proxyKey, upload);
       if (transport === 'proxy' && cookieJarEnabled && result.setCookies?.length) {
-        await persistCookies(applySetCookies(cookies, prepared.url, result.setCookies));
+        try { await persistCookies(applySetCookies(cookies, prepared.url, result.setCookies)); }
+        catch { notify('Cookie could not be saved locally'); }
       }
       const after = applyWorkflowScript(draft.postScript || '', workingEnv, 'after', result);
       tabSnapshots.current.set(sentRequestId, { response: result, error: '', scriptResults: after.checks });
