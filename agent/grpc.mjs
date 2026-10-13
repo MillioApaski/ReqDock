@@ -44,6 +44,7 @@ export function resolveUnaryMethod(protoText, serviceName, methodName, protoFile
   if (!method) throw Error('Method does not exist in this service.');
   if (mode === 'unary' && (method.requestStream || method.responseStream)) throw Error('Only unary gRPC methods are supported.');
   if (mode === 'server-stream' && (method.requestStream || !method.responseStream)) throw Error('Only server-streaming gRPC methods are supported.');
+  if (mode === 'interactive' && !method.requestStream) throw Error('Only client/bidirectional streaming gRPC methods are supported.');
   return { root, method, path: '/' + service.fullName.slice(1) + '/' + method.name,
     requestType: method.resolvedRequestType || root.lookupType(method.requestType),
     responseType: method.resolvedResponseType || root.lookupType(method.responseType) };

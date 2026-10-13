@@ -9,6 +9,7 @@ import { randomBytes, timingSafeEqual, randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { callGrpcUnary, discoverGrpcServices } from './grpc.mjs';
 import { streamGrpcServer } from './grpc-stream.mjs';
+import { createGrpcInteractiveSession } from './grpc-session.mjs';
 
 const DEFAULT_PORT = 47831;
 const DEFAULT_ORIGINS = ['https://reqdock.convert-alpha.cc', 'http://localhost:5173', 'http://127.0.0.1:5173', 'http://127.0.0.1:4173'];
@@ -103,6 +104,7 @@ export function createAgent({ port = DEFAULT_PORT, token = randomBytes(32).toStr
   allowedHosts = ['localhost', '127.0.0.1', '[::1]'], allowedOrigins = DEFAULT_ORIGINS } = {}) {
   const hosts = new Set(allowedHosts.map(canonicalHost));
   const origins = new Set(allowedOrigins.map(s => new URL(s).origin));
+  const grpcSessions = new Map(); // Max 8, per-process only; never persisted.
   const server = createServer(async (req, res) => {
     // Validate Host even for OPTIONS to block DNS-rebinding / cross-site attacks.
     const listenPort = server.address()?.port || port;
@@ -117,11 +119,51 @@ export function createAgent({ port = DEFAULT_PORT, token = randomBytes(32).toStr
       return res.end();
     }
     if (!constantTimeEquals(req.headers['x-reqdock-agent-token'], token)) return fail(res, 401, 'Invalid Local Agent token.', cors);
-    if (req.method === 'GET' && req.url === '/status') return json(res, 200, { ok: true, version: '1.1.0', allowedHosts: [...hosts] }, cors);
-    if (req.method !== 'POST' || !['/request', '/grpc/unary', '/grpc/discover', '/grpc/stream'].includes(req.url)) return fail(res, 404, 'Not found.', cors);
+    if (req.method === 'GET' && req.url === '/status') return json(res, 200, { ok: true, version: '1.2.0', allowedHosts: [...hosts] }, cors);
+    const grpcRoute = /^\/grpc\/session\/([0-9a-f-]{36})\/(events|message|finish|cancel)$/.exec(req.url || '');
+    if (grpcRoute) {
+      const session = grpcSessions.get(grpcRoute[1]);
+      if (!session) return fail(res, 404, 'gRPC session not found or expired.', cors);
+      const action = grpcRoute[2];
+      if (action === 'events') {
+        if (req.method !== 'GET') return fail(res, 405, 'Use GET for events.', cors);
+        try {
+          res.writeHead(200, { ...cors, 'Content-Type':'application/x-ndjson; charset=utf-8',
+            'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff' });
+          session.subscribe(res);
+        } catch { if (!res.writableEnded) res.end(); }
+        return;
+      }
+      if (req.method !== 'POST') return fail(res, 405, 'Use POST for stream controls.', cors);
+      if (action === 'message') {
+        try {
+          const body = JSON.parse((await limitedStream(req, 3 * 1024 * 1024)).toString('utf8'));
+          return json(res, 200, { sent:session.send(body.message) }, cors);
+        } catch (error) { return fail(res, error?.message === 'SIZE_LIMIT' ? 413 : 400,
+          error instanceof Error ? error.message : 'Invalid stream message.', cors); }
+      }
+      try {
+        if (action === 'finish') session.halfClose();
+        else session.cancel();
+        return json(res, 200, { ok:true }, cors);
+      } catch (error) { return fail(res, 400, error instanceof Error ? error.message : 'Stream control failed.', cors); }
+    }
+    if (req.method !== 'POST' || !['/request', '/grpc/unary', '/grpc/discover', '/grpc/stream', '/grpc/session'].includes(req.url))
+      return fail(res, 404, 'Not found.', cors);
     let data;
     try { data = JSON.parse((await limitedStream(req, MAX_REQUEST)).toString('utf8')); }
     catch (error) { return fail(res, error?.message === 'SIZE_LIMIT' ? 413 : 400, 'Invalid or oversized request JSON.', cors); }
+    if (req.url === '/grpc/session') {
+      if (grpcSessions.size >= 8) return fail(res, 429, 'Too many active/retained gRPC sessions (8 maximum).', cors);
+      try {
+        const session = await createGrpcInteractiveSession(data,
+          { allowedHosts:hosts, agentPort:listenPort }, id => grpcSessions.delete(id));
+        grpcSessions.set(session.id, session);
+        return json(res, 201, { id:session.id, mode:session.mode }, cors);
+      } catch (error) {
+        return fail(res, 400, error instanceof Error ? error.message : 'Could not start gRPC session.', cors);
+      }
+    }
     if (req.url === '/grpc/stream') {
       // application/x-ndjson keeps streaming responses incremental without a
       // WebSocket server or buffering untrusted upstream output in memory.

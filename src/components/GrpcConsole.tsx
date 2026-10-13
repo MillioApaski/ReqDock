@@ -26,9 +26,14 @@ export function GrpcConsole({ agentToken, onPair, collections, defaultCollection
   const [presetId, setPresetId] = useState(preset?.id);
   const [presetName, setPresetName] = useState(preset?.name || 'New gRPC request');
   const [collectionId, setCollectionId] = useState(preset?.collectionId || defaultCollectionId || collections[0]?.id || '');
-  const [callMode, setCallMode] = useState<'unary' | 'server-stream'>(preset?.callMode || 'unary');
+  const [callMode, setCallMode] = useState<GrpcRequestPreset['callMode']>(preset?.callMode || 'unary');
   const [streamEvents, setStreamEvents] = useState<GrpcStreamEvent[]>([]);
   const [streamStatus, setStreamStatus] = useState('');
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const sessionRef = useRef<string | null>(null);
+  const [halfClosed, setHalfClosed] = useState(false);
+  const [sendingMessage, setSendingMessage] = useState(false);
+  const [sentCount, setSentCount] = useState(0);
   const [target, setTarget] = useState(preset?.target || 'grpc://127.0.0.1:50051');
   const [proto, setProto] = useState(preset?.proto ?? EXAMPLE_PROTO);
   const [entryName, setEntryName] = useState(preset?.entryName || 'main.proto');
@@ -103,14 +108,93 @@ export function GrpcConsole({ agentToken, onPair, collections, defaultCollection
         if (list.length && !list.includes(service)) setService(list[0]);
       } else {
         setReflectedMethods(data.methods || []);
-        const available = data.methods?.find(item => !item.requestStream);
+        const available = data.methods?.[0];
         if (available && !data.methods?.some(item => item.name === method)) {
-          setMethod(available.name); setCallMode(available.responseStream ? 'server-stream' : 'unary');
+          setMethod(available.name);
+          setCallMode(available.requestStream ? (available.responseStream ? 'bidi' : 'client-stream')
+            : available.responseStream ? 'server-stream' : 'unary');
         }
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Service discovery failed.');
     } finally { setDiscovering(false); }
+  }
+
+  const isInteractive = callMode === 'client-stream' || callMode === 'bidi';
+  const sessionHeaders = { 'Content-Type':'application/json', 'X-ReqDock-Agent-Token':agentToken };
+  const rpcPayload = (requestMetadata: unknown, requestBody?: unknown) => ({
+    target, proto:source === 'files' ? proto : undefined,
+    protoFiles:source === 'files' ? protoFiles : undefined,
+    entryName:source === 'files' ? entryName : undefined,
+    useReflection:source === 'reflection', service, method, metadata:requestMetadata,
+    ...(requestBody === undefined ? {} : {message:requestBody}),
+  });
+
+  async function startInteractive() {
+    if (sessionRef.current || loading) return;
+    setError(''); setResult(null); setStreamEvents([]); setStreamStatus('');
+    if (!agentToken) { setError('Pair with Local Agent first.'); return; }
+    let requestMetadata: unknown;
+    try { requestMetadata = JSON.parse(metadata); }
+    catch { setError('Metadata must contain a JSON object.'); return; }
+    if (!requestMetadata || typeof requestMetadata !== 'object' || Array.isArray(requestMetadata)) {
+      setError('Metadata must contain a JSON object.'); return;
+    }
+    const ctrl = new AbortController(); controller.current = ctrl;
+    setLoading(true); setHalfClosed(false); setSentCount(0);
+    let id: string | null = null;
+    try {
+      const start = await fetch(LOCAL_AGENT_URL + '/grpc/session', {
+        method:'POST', headers:sessionHeaders, signal:ctrl.signal,
+        body:JSON.stringify(rpcPayload(requestMetadata)), cache:'no-store',
+      });
+      const data = await start.json() as {id?:string; error?:string};
+      if (!start.ok || !data.id) throw Error(data.error || 'Could not start interactive gRPC stream.');
+      id = data.id; sessionRef.current = id; setSessionId(id);
+      setStreamStatus('Connected · send messages, then Half-close to finish.');
+      const events = await fetch(LOCAL_AGENT_URL + '/grpc/session/' + id + '/events', {
+        headers:{'X-ReqDock-Agent-Token':agentToken}, signal:ctrl.signal, cache:'no-store',
+      });
+      if (!events.ok || !events.body) throw Error('Cannot subscribe to gRPC stream events.');
+      await consumeGrpcStream(events.body, event => {
+        if (event.type === 'message') setStreamEvents(old => [...old, event]);
+        else if (event.type === 'error') { setError(event.error); setStreamStatus('Stream failed'); }
+        else setStreamStatus('Completed: ' + event.count + ' messages · ' + event.duration + ' ms');
+      });
+    } catch (error) {
+      if (!ctrl.signal.aborted) setError(error instanceof Error ? error.message : 'gRPC session failed.');
+    } finally {
+      if (id && !ctrl.signal.aborted) {
+        // Even completed sessions may remain briefly for event replay; no further messages are sent.
+      }
+      sessionRef.current = null; setSessionId(null); setLoading(false); controller.current = null;
+    }
+  }
+
+  async function streamCommand(action: 'message' | 'finish' | 'cancel') {
+    const id = sessionRef.current;
+    if (!id) return;
+    if (sendingMessage && action !== 'cancel') return;
+    if (action === 'message' && halfClosed) return;
+    setSendingMessage(true);
+    try {
+      let body: unknown = {};
+      if (action === 'message') {
+        body = { message:JSON.parse(message) };
+        if (!body || typeof body !== 'object' || !('message' in body) ||
+            !body.message || typeof body.message !== 'object' || Array.isArray(body.message))
+          throw Error('Each stream message must be a JSON object.');
+      }
+      const response = await fetch(LOCAL_AGENT_URL + '/grpc/session/' + id + '/' + action, {
+        method:'POST', headers:sessionHeaders, body:JSON.stringify(body), cache:'no-store',
+      });
+      const result = await response.json() as {error?:string; sent?:number};
+      if (!response.ok) throw Error(result.error || 'Stream command failed.');
+      if (action === 'message') { setSentCount(result.sent || 0); setStreamStatus('Sent ' + result.sent + ' message(s)'); }
+      if (action === 'finish') { setHalfClosed(true); setStreamStatus('Sending finished · awaiting response'); }
+      if (action === 'cancel') { controller.current?.abort(); setStreamStatus('Cancelled'); }
+    } catch (error) { setError(error instanceof Error ? error.message : 'Stream command failed.'); }
+    finally { setSendingMessage(false); }
   }
 
   async function invoke() {
@@ -160,7 +244,7 @@ export function GrpcConsole({ agentToken, onPair, collections, defaultCollection
   }
 
   return <div className="grpc-console">
-    <p className="modal-note">Unary and Server Streaming RPCs via Local Agent. Client and bidirectional streaming are not yet supported. Server streams stop after 100 messages, 2 MiB or 25 seconds.</p>
+    <p className="modal-note">All four gRPC call modes via paired Local Agent. Interactive client and bidirectional streams support Send, Half-close and Cancel; sessions expire automatically. Limits: 100 messages, 2 MiB preview, 25 seconds.</p>
     <div className="grpc-save-row">
       <input className="form-input" aria-label="Saved gRPC name" placeholder="gRPC request name" value={presetName} onChange={e => setPresetName(e.target.value)} />
       <select className="form-input" aria-label="gRPC collection" value={collectionId} onChange={e => setCollectionId(e.target.value)}>
@@ -213,10 +297,12 @@ export function GrpcConsole({ agentToken, onPair, collections, defaultCollection
       {!!reflectedMethods.length && <label className="field-label">Methods
         <select className="form-input" aria-label="Discovered gRPC methods" value={reflectedMethods.some(m => m.name === method) ? method : ''}
           onChange={e => { setMethod(e.target.value); const item = reflectedMethods.find(x => x.name === e.target.value);
-            if (item) setCallMode(item.responseStream ? 'server-stream' : 'unary'); }}>
+            if (item) setCallMode(item.requestStream ? (item.responseStream ? 'bidi' : 'client-stream')
+              : item.responseStream ? 'server-stream' : 'unary'); }}>
           <option value="">Select method...</option>
-          {reflectedMethods.map(item => <option key={item.name} value={item.name} disabled={item.requestStream}>
-            {item.name}{item.requestStream ? ' (client stream, unsupported)' : item.responseStream ? ' (server stream)' : ' (unary)'}
+          {reflectedMethods.map(item => <option key={item.name} value={item.name}>
+            {item.name}{item.requestStream ? (item.responseStream ? ' (bidirectional)' : ' (client stream)')
+              : item.responseStream ? ' (server stream)' : ' (unary)'}
           </option>)}
         </select>
       </label>}
@@ -227,11 +313,19 @@ export function GrpcConsole({ agentToken, onPair, collections, defaultCollection
       <label className="field-label">Metadata (JSON)<textarea className="modal-textarea grpc-json" spellCheck={false} aria-label="gRPC metadata JSON" value={metadata} onChange={e => setMetadata(e.target.value)} /></label>
     </div>
     <label className="field-label grpc-mode-label">Call mode
-      <select className="form-input" aria-label="gRPC call mode" value={callMode} onChange={e => setCallMode(e.target.value as 'unary' | 'server-stream')}>
+      <select className="form-input" aria-label="gRPC call mode" value={callMode} disabled={loading} onChange={e => setCallMode(e.target.value as GrpcRequestPreset['callMode'])}>
         <option value="unary">Unary RPC</option><option value="server-stream">Server Streaming</option>
+        <option value="client-stream">Client Streaming</option><option value="bidi">Bidirectional Streaming</option>
       </select>
     </label>
-    <div className="modal-footer grpc-actions"><span className="modal-note">Use <code>grpc://</code> or <code>grpcs://</code>. Host must be allowlisted in Agent.</span><button className="button primary" disabled={!agentToken} onClick={() => void invoke()}><Play size={14} /> {loading ? 'Cancel' : 'Invoke RPC'}</button></div>
+    {isInteractive && <div className="grpc-session-controls">
+      <div className="grpc-session-state" role="status">{sessionId ? 'Session active' : 'No active session'} · {sentCount} messages sent{halfClosed ? ' · sending closed' : ''}</div>
+      <button className="button outlined" disabled={!agentToken || loading} onClick={() => void startInteractive()}><Play size={14}/> Start session</button>
+      <button className="button primary" disabled={!sessionId || halfClosed || sendingMessage} onClick={() => void streamCommand('message')}>Send message</button>
+      <button className="button outlined" disabled={!sessionId || halfClosed || sendingMessage} onClick={() => void streamCommand('finish')}>Half-close</button>
+      <button className="button outlined danger" disabled={!sessionId} onClick={() => void streamCommand('cancel')}>Cancel</button>
+    </div>}
+    {!isInteractive && <div className="modal-footer grpc-actions"><span className="modal-note">Use <code>grpc://</code> or <code>grpcs://</code>. Host must be allowlisted in Agent.</span><button className="button primary" disabled={!agentToken} onClick={() => void invoke()}><Play size={14} /> {loading ? 'Cancel' : 'Invoke RPC'}</button></div>}
     {(streamEvents.length > 0 || streamStatus) && <div className="grpc-output" aria-label="gRPC stream output">
       <div className="grpc-output-title"><strong>Stream messages ({streamEvents.length})</strong><span>{streamStatus || (loading ? 'Streaming...' : '')}</span></div>
       <div className="grpc-stream-messages">{streamEvents.map(event => event.type === 'message' &&
