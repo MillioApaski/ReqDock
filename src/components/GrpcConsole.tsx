@@ -1,9 +1,13 @@
 import { useRef, useState } from 'react';
-import { Copy, FileUp, Play, ShieldAlert, RefreshCw } from 'lucide-react';
+import { Copy, FileUp, Play, ShieldAlert, RefreshCw, Save, Trash2 } from 'lucide-react';
+import type { Collection, GrpcRequestPreset } from '../types';
+import { consumeGrpcStream, type GrpcStreamEvent } from '../lib/grpc-stream';
 import { LOCAL_AGENT_URL } from '../lib/request';
 
 type GrpcResult = { status: number; statusText: string; duration: number; response: unknown };
-type Props = { agentToken: string; onPair: () => void };
+type Props = { agentToken: string; onPair: () => void; collections: Collection[];
+  defaultCollectionId?: string; preset?: GrpcRequestPreset;
+  onSave: (preset: GrpcRequestPreset) => Promise<void>; onDelete: (id: string) => Promise<void> };
 type ProtoFile = { name: string; content: string };
 type ReflectedMethod = { name: string; requestStream: boolean; responseStream: boolean };
 
@@ -18,25 +22,46 @@ const EXAMPLE_PROTO = [
   'message HelloReply { string message = 1; }',
 ].join('\n');
 
-export function GrpcConsole({ agentToken, onPair }: Props) {
-  const [target, setTarget] = useState('grpc://127.0.0.1:50051');
-  const [proto, setProto] = useState(EXAMPLE_PROTO);
-  const [entryName, setEntryName] = useState('main.proto');
-  const [protoFiles, setProtoFiles] = useState<ProtoFile[]>([]);
-  const [source, setSource] = useState<'files' | 'reflection'>('files');
+export function GrpcConsole({ agentToken, onPair, collections, defaultCollectionId, preset, onSave, onDelete }: Props) {
+  const [presetId, setPresetId] = useState(preset?.id);
+  const [presetName, setPresetName] = useState(preset?.name || 'New gRPC request');
+  const [collectionId, setCollectionId] = useState(preset?.collectionId || defaultCollectionId || collections[0]?.id || '');
+  const [callMode, setCallMode] = useState<'unary' | 'server-stream'>(preset?.callMode || 'unary');
+  const [streamEvents, setStreamEvents] = useState<GrpcStreamEvent[]>([]);
+  const [streamStatus, setStreamStatus] = useState('');
+  const [target, setTarget] = useState(preset?.target || 'grpc://127.0.0.1:50051');
+  const [proto, setProto] = useState(preset?.proto ?? EXAMPLE_PROTO);
+  const [entryName, setEntryName] = useState(preset?.entryName || 'main.proto');
+  const [protoFiles, setProtoFiles] = useState<ProtoFile[]>(preset?.protoFiles || []);
+  const [source, setSource] = useState<'files' | 'reflection'>(preset?.source || 'files');
   const [discovered, setDiscovered] = useState<string[]>([]);
   const [reflectedMethods, setReflectedMethods] = useState<ReflectedMethod[]>([]);
   const [discovering, setDiscovering] = useState(false);
-  const [service, setService] = useState('demo.Greeter');
-  const [method, setMethod] = useState('SayHello');
-  const [message, setMessage] = useState('{\n  "name": "ReqDock"\n}');
-  const [metadata, setMetadata] = useState('{}');
+  const [service, setService] = useState(preset?.service || 'demo.Greeter');
+  const [method, setMethod] = useState(preset?.method || 'SayHello');
+  const [message, setMessage] = useState(preset?.message || '{\n  "name": "ReqDock"\n}');
+  const [metadata, setMetadata] = useState(preset?.metadata || '{}');
   const [error, setError] = useState('');
   const [result, setResult] = useState<GrpcResult | null>(null);
   const [loading, setLoading] = useState(false);
   const controller = useRef<AbortController | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const dirRef = useRef<HTMLInputElement>(null);
+
+  async function savePreset() {
+    if (!collectionId || !collections.some(c => c.id === collectionId)) { setError('Select a collection first.'); return; }
+    if (!presetName.trim()) { setError('Enter a preset name.'); return; }
+    const id = presetId || crypto.randomUUID();
+    const model: GrpcRequestPreset = { id, name:presetName.trim(), collectionId, updatedAt:Date.now(),
+      target, proto, protoFiles, entryName, source, service, method, message, metadata, callMode };
+    try {
+      await onSave(model); setPresetId(id); setError(''); setStreamStatus('Saved to collection.');
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not save gRPC request.'); }
+  }
+  async function deletePreset() {
+    if (!presetId || !window.confirm('Delete this saved gRPC request?')) return;
+    try { await onDelete(presetId); } catch { setError('Could not delete saved request.'); }
+  }
 
   async function importFiles(selected: FileList | null) {
     if (!selected?.length) return;
@@ -77,8 +102,10 @@ export function GrpcConsole({ agentToken, onPair }: Props) {
         if (list.length && !list.includes(service)) setService(list[0]);
       } else {
         setReflectedMethods(data.methods || []);
-        const firstUnary = data.methods?.find(item => !item.requestStream && !item.responseStream);
-        if (firstUnary && !data.methods?.some(item => item.name === method)) setMethod(firstUnary.name);
+        const available = data.methods?.find(item => !item.requestStream);
+        if (available && !data.methods?.some(item => item.name === method)) {
+          setMethod(available.name); setCallMode(available.responseStream ? 'server-stream' : 'unary');
+        }
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Service discovery failed.');
@@ -87,7 +114,7 @@ export function GrpcConsole({ agentToken, onPair }: Props) {
 
   async function invoke() {
     if (loading) { controller.current?.abort(); return; }
-    setError(''); setResult(null);
+    setError(''); setResult(null); setStreamEvents([]); setStreamStatus('');
     if (!agentToken) { setError('Pair with Local Agent first.'); return; }
     if (source === 'files' && new TextEncoder().encode(proto).length > 128 * 1024) { setError('.proto exceeds the 128 KiB limit.'); return; }
     let requestBody: unknown, requestMetadata: unknown;
@@ -102,7 +129,7 @@ export function GrpcConsole({ agentToken, onPair }: Props) {
     const cancel = new AbortController(); controller.current = cancel;
     setLoading(true);
     try {
-      const response = await fetch(LOCAL_AGENT_URL + '/grpc/unary', {
+      const response = await fetch(LOCAL_AGENT_URL + (callMode === 'server-stream' ? '/grpc/stream' : '/grpc/unary'), {
         method: 'POST', signal: cancel.signal,
         headers: { 'Content-Type': 'application/json', 'X-ReqDock-Agent-Token': agentToken },
         body: JSON.stringify({ target, proto: source === 'files' ? proto : undefined,
@@ -110,9 +137,18 @@ export function GrpcConsole({ agentToken, onPair }: Props) {
           useReflection: source === 'reflection', service, method, message: requestBody, metadata: requestMetadata }),
         cache: 'no-store',
       });
-      const data = await response.json() as GrpcResult & { error?: string };
-      if (!response.ok) throw Error(data.error || 'Local Agent returned HTTP ' + response.status);
-      setResult(data);
+      if (callMode === 'server-stream') {
+        if (!response.ok || !response.body) throw Error('Unable to establish server stream (HTTP ' + response.status + ').');
+        await consumeGrpcStream(response.body, event => {
+          if (event.type === 'message') setStreamEvents(old => [...old, event]);
+          else if (event.type === 'error') { setError(event.error); setStreamStatus('Stream failed'); }
+          else setStreamStatus('Completed: ' + event.count + ' messages · ' + event.duration + ' ms');
+        });
+      } else {
+        const data = await response.json() as GrpcResult & { error?: string };
+        if (!response.ok) throw Error(data.error || 'Local Agent returned HTTP ' + response.status);
+        setResult(data);
+      }
     } catch (cause) {
       setError(cancel.signal.aborted ? 'gRPC call cancelled.' :
         cause instanceof TypeError ? 'Cannot connect to Local Agent. Verify it is running and your browser permits local network access.' :
@@ -123,7 +159,15 @@ export function GrpcConsole({ agentToken, onPair }: Props) {
   }
 
   return <div className="grpc-console">
-    <p className="modal-note">Unary RPC through Local Agent. Select an uploaded Proto file set or discover services using server reflection. Imported files never reach the Agent filesystem.</p>
+    <p className="modal-note">Unary and Server Streaming RPCs via Local Agent. Client and bidirectional streaming are not yet supported. Server streams stop after 100 messages, 2 MiB or 25 seconds.</p>
+    <div className="grpc-save-row">
+      <input className="form-input" aria-label="Saved gRPC name" placeholder="gRPC request name" value={presetName} onChange={e => setPresetName(e.target.value)} />
+      <select className="form-input" aria-label="gRPC collection" value={collectionId} onChange={e => setCollectionId(e.target.value)}>
+        {collections.map(collection => <option key={collection.id} value={collection.id}>{collection.name}</option>)}
+      </select>
+      <button className="button outlined" onClick={() => void savePreset()}><Save size={14}/> Save</button>
+      {presetId && <button className="icon-button" aria-label="Delete saved gRPC request" title="Delete saved gRPC request" onClick={() => void deletePreset()}><Trash2 size={15}/></button>}
+    </div>
     <div className="grpc-source-selector" role="group" aria-label="gRPC schema source">
       <button type="button" className={source === 'files' ? 'active' : ''} onClick={() => setSource('files')}>Local .proto files</button>
       <button type="button" className={source === 'reflection' ? 'active' : ''} onClick={() => setSource('reflection')}>Server Reflection</button>
@@ -167,10 +211,11 @@ export function GrpcConsole({ agentToken, onPair }: Props) {
       </label>}
       {!!reflectedMethods.length && <label className="field-label">Methods
         <select className="form-input" aria-label="Discovered gRPC methods" value={reflectedMethods.some(m => m.name === method) ? method : ''}
-          onChange={e => setMethod(e.target.value)}>
+          onChange={e => { setMethod(e.target.value); const item = reflectedMethods.find(x => x.name === e.target.value);
+            if (item) setCallMode(item.responseStream ? 'server-stream' : 'unary'); }}>
           <option value="">Select method...</option>
-          {reflectedMethods.map(item => <option key={item.name} value={item.name} disabled={item.requestStream || item.responseStream}>
-            {item.name}{item.requestStream || item.responseStream ? ' (streaming, not yet supported)' : ''}
+          {reflectedMethods.map(item => <option key={item.name} value={item.name} disabled={item.requestStream}>
+            {item.name}{item.requestStream ? ' (client stream, unsupported)' : item.responseStream ? ' (server stream)' : ' (unary)'}
           </option>)}
         </select>
       </label>}
@@ -180,7 +225,17 @@ export function GrpcConsole({ agentToken, onPair }: Props) {
       <label className="field-label">Request body (JSON)<textarea className="modal-textarea grpc-json" spellCheck={false} aria-label="gRPC request JSON" value={message} onChange={e => setMessage(e.target.value)} /></label>
       <label className="field-label">Metadata (JSON)<textarea className="modal-textarea grpc-json" spellCheck={false} aria-label="gRPC metadata JSON" value={metadata} onChange={e => setMetadata(e.target.value)} /></label>
     </div>
-    <div className="modal-footer grpc-actions"><span className="modal-note">Plaintext <code>grpc://</code> or TLS <code>grpcs://</code>. Host must be allowlisted in Agent.</span><button className="button primary" disabled={!agentToken} onClick={() => void invoke()}><Play size={14} /> {loading ? 'Cancel' : 'Invoke RPC'}</button></div>
+    <label className="field-label grpc-mode-label">Call mode
+      <select className="form-input" aria-label="gRPC call mode" value={callMode} onChange={e => setCallMode(e.target.value as 'unary' | 'server-stream')}>
+        <option value="unary">Unary RPC</option><option value="server-stream">Server Streaming</option>
+      </select>
+    </label>
+    <div className="modal-footer grpc-actions"><span className="modal-note">Use <code>grpc://</code> or <code>grpcs://</code>. Host must be allowlisted in Agent.</span><button className="button primary" disabled={!agentToken} onClick={() => void invoke()}><Play size={14} /> {loading ? 'Cancel' : 'Invoke RPC'}</button></div>
+    {(streamEvents.length > 0 || streamStatus) && <div className="grpc-output" aria-label="gRPC stream output">
+      <div className="grpc-output-title"><strong>Stream messages ({streamEvents.length})</strong><span>{streamStatus || (loading ? 'Streaming...' : '')}</span></div>
+      <div className="grpc-stream-messages">{streamEvents.map(event => event.type === 'message' &&
+        <div className="grpc-stream-item" key={event.index}><small>#{event.index}</small><pre>{JSON.stringify(event.data, null, 2)}</pre></div>)}</div>
+    </div>}
     {(error || result) && <div className="grpc-output" role="status">
       <div className="grpc-output-title"><strong>{error ? 'RPC failed' : 'gRPC OK'}</strong>{result && <><span>{result.duration} ms</span><button className="icon-button subtle" aria-label="Copy gRPC response" onClick={() => void navigator.clipboard.writeText(JSON.stringify(result.response, null, 2))}><Copy size={14}/></button></>}</div>
       {error ? <p className="grpc-error">{error}</p> : <pre aria-label="gRPC response JSON">{JSON.stringify(result?.response, null, 2)}</pre>}
