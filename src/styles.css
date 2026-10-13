@@ -473,3 +473,31 @@ input, textarea, select { color: var(--text); }
 .agent-error { color:var(--yellow); background:rgba(232,185,98,.09); }
 .transport-toggle { gap:1px; }
 @media (max-width:690px) { .transport-toggle button { padding:5px 6px; font-size:10px; } .transport-toggle .proxy-settings { padding:5px; } }
+
+
+/* v0.9 gRPC Unary Console. Keep it within the viewport and scroll the dialog. */
+.grpc-modal { width:min(100%, 880px); }
+.grpc-console { display:grid; gap:12px; min-width:0; }
+.grpc-console .modal-note { margin:0; }
+.grpc-console .proxy-info button { margin-top:10px; }
+.grpc-fields { display:grid; grid-template-columns:2fr 1.5fr 1fr; gap:9px; }
+.grpc-fields .field-label, .grpc-two-col .field-label { display:grid; gap:6px; min-width:0; }
+.grpc-fields .form-input { min-width:0; width:100%; font-size:12px; }
+.grpc-editor-heading { display:flex; gap:12px; justify-content:space-between; align-items:center; }
+.grpc-editor-heading strong { font-size:12px; }
+.grpc-proto { min-height:165px; max-height:300px; }
+.grpc-two-col { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.grpc-json { min-height:128px; }
+.grpc-actions { margin-top:0; align-items:center; justify-content:space-between; }
+.grpc-actions .button { white-space:nowrap; }
+.grpc-output { border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+.grpc-output-title { display:flex; align-items:center; gap:10px; padding:10px 12px; background:var(--panel-raised); }
+.grpc-output-title strong { margin-right:auto; font-size:13px; }
+.grpc-output-title span { font-size:12px; color:var(--text-muted); }
+.grpc-output pre { padding:14px; white-space:pre-wrap; overflow-wrap:anywhere; overflow:auto; max-height:310px; font-size:12px; line-height:1.5; }
+.grpc-error { color:var(--red); margin:0; padding:12px; font-size:12px; }
+@media(max-width:720px) {
+ .grpc-fields,.grpc-two-col { grid-template-columns:1fr; }
+ .grpc-modal { padding:14px; }
+ .grpc-actions { flex-wrap:wrap; }
+}

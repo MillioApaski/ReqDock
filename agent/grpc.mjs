@@ -35,7 +35,7 @@ export function resolveUnaryMethod(protoText, serviceName, methodName) {
   }
   const parsed = protobuf.parse(protoText, { keepCase: true });
   // Untrusted client input never causes filesystem or remote proto imports.
-  if (parsed.imports.length || parsed.weakImports.length) throw Error('Imported .proto files are not supported in this version. Use a self-contained definition.');
+  if ((parsed.imports || []).length || (parsed.weakImports || []).length) throw Error('Imported .proto files are not supported in this version. Use a self-contained definition.');
   const root = parsed.root;
   root.resolveAll();
   const service = root.lookupService(serviceName);
@@ -67,9 +67,10 @@ export async function callGrpcUnary(payload, { allowedHosts, agentPort, timeoutM
   const { requestType, responseType, path } = resolveUnaryMethod(payload.proto, payload.service, payload.method);
   const input = payload.message ?? {};
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw Error('gRPC message must be a JSON object.');
-  const verify = requestType.verify(input);
+  const message = requestType.fromObject(input);
+  const verify = requestType.verify(message);
   if (verify) throw Error('Invalid gRPC input: ' + verify);
-  const encoded = requestType.encode(requestType.fromObject(input)).finish();
+  const encoded = requestType.encode(message).finish();
   if (encoded.length > GRPC_MESSAGE_LIMIT) throw Error('gRPC request exceeds 2 MiB.');
   const metadata = metadataFromObject(payload.metadata ?? {});
   const credentials = target.tls ? grpc.credentials.createSsl() : grpc.credentials.createInsecure();

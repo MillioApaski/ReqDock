@@ -1,5 +1,7 @@
 # ReqDock
 
+> **v0.9 gRPC Unary:** A standalone RPC console using Local Agent and self-contained `.proto` definitions. Import a `.proto`, enter `grpc://host:port` or `grpcs://host:port`, the fully qualified service/method and a JSON request body. Unary only, max 2 MiB response, 25s deadline. Local Agent must be running and paired; the target host must be allowlisted. No TLS bypass, file imports, reflection or streaming yet.
+
 > **v0.8 Local Agent:** Third transport mode for localhost and private-network HTTP APIs. Runs on the user's own computer, requires Node.js 22+, binds exclusively to `127.0.0.1:47831` and generates an ephemeral pairing token. Targets and web origins are exact allowlists. No cloud deployment change needed. HTTPS public sites may prompt to allow local network access.
 
 **v0.7 Cookie Jar:** Optional (off by default), exact-host Cloud Proxy cookie storage in local IndexedDB. Toggle it with the Cookie icon. Supports Set-Cookie, path/expiry rules, a manual host-only entry and sequential Collection Runner reuse. Browser Direct mode cannot inspect Set-Cookie; Cookie Jar does not apply there. Cookies remain unencrypted on this device and are deliberately excluded from backups/cloud sync. Even HttpOnly-attributed values are readable by client-side JavaScript; do not use on shared/untrusted browsers.
@@ -181,3 +183,22 @@ Direct continues to obey the browser's CORS policy; Cloud Proxy still requires i
 npm test
 npm run build
 ```
+
+
+## gRPC Unary (Local Agent)
+
+The gRPC icon in the request toolbar opens the Unary Console. Start the upgraded v0.9 Local Agent
+(\`npm install && npm run agent\`) and pair its token in Agent settings. It supports:
+
+- Self-contained proto3/proto2 message/service definitions entered or imported via a single \`.proto\` file
+- Fully-qualified service name (e.g. \`demo.Greeter\`), unary method name (e.g. \`SayHello\`)
+- JSON request messages, optional string-valued metadata, JSON response and gRPC status/errors
+- Plaintext \`grpc://host:port\` (HTTP/2) or verified-TLS \`grpcs://host:port\`; exact Agent host allowlist applies
+
+Start: \`npm run agent -- --allow-hosts=192.168.1.100\` for LAN services.
+For \`grpcs://\`, the server certificate must be trusted by Node.js. **Certificate verification is never disabled.**
+
+**Not supported in v0.9:** imported/multiple proto files, service reflection, unary call history/Collections,
+client/server/bidirectional streaming, arbitrary \`-bin\` metadata, dynamic trust certificates, or
+proxying gRPC directly via Cloudflare Workers. The console does not upload proto content to a third party.
+For existing gRPC APIs using \`import "google/protobuf/empty.proto";\`, provide an inlined equivalent type.
