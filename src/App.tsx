@@ -18,6 +18,7 @@ import { openTab, closeTab, restoreTabs } from './lib/tabs';
 import { clampPaneRatio, DEFAULT_PANE_RATIO } from './lib/layout';
 import { evaluateAssertions, newAssertion } from './lib/assertions';
 import { runCollection, type RunResult } from './lib/runner';
+import { runGrpcCollection, type GrpcRunResult } from './lib/grpc-runner';
 import { authorizePkce } from './lib/oauth';
 import { encryptBackup, decryptBackup, writeCloudSnapshot, readCloudSnapshot } from './lib/sync';
 import { applyWorkflowScript } from './lib/script';
@@ -45,6 +46,8 @@ export default function App() {
   const [folders, setFolders] = useState<Folder[]>([]);
   const [expanded, setExpanded] = useState<string[]>([]);
   const [runResults, setRunResults] = useState<RunResult[]>([]);
+  const [grpcRunResults, setGrpcRunResults] = useState<GrpcRunResult[]>([]);
+  const [runnerProtocol, setRunnerProtocol] = useState<'http' | 'grpc'>('http');
   const [running, setRunning] = useState(false);
   const [runCollectionId, setRunCollectionId] = useState('');
   const runnerRef = useRef<AbortController | null>(null);
@@ -424,11 +427,23 @@ export default function App() {
   };
   const startRunner = async () => {
     if (running) { runnerRef.current?.abort(); return; }
+    if (runnerProtocol === 'grpc' && !agentToken) { notify('Pair the Local Agent before running gRPC requests.'); setModal('agent'); return; }
     const queue = requests.filter(r => r.collectionId === runCollectionId);
-    if (!queue.length) { notify('Collection has no requests'); return; }
+    const grpcQueue = grpcPresets.filter(r => r.collectionId === runCollectionId)
+      .sort((a, b) => a.updatedAt - b.updatedAt || a.name.localeCompare(b.name));
+    if (runnerProtocol === 'http' && !queue.length) { notify('Collection has no HTTP requests'); return; }
+    if (runnerProtocol === 'grpc' && !grpcQueue.length) { notify('Collection has no saved gRPC requests'); return; }
     const abort = new AbortController(); runnerRef.current = abort;
-    setRunning(true); setRunResults([]);
-    try { await runCollection(queue, selectedEnv, transport, proxyKey, abort.signal, setRunResults, environment => { void saveEnvironment(environment); }, transport === 'proxy' && cookieJarEnabled ? { cookies, onChange: persistCookies } : undefined, agentToken); }
+    setRunning(true); setRunResults([]); setGrpcRunResults([]);
+    try {
+      if (runnerProtocol === 'grpc') {
+        await runGrpcCollection(grpcQueue, selectedEnv, agentToken, abort.signal, { onProgress: setGrpcRunResults });
+      } else {
+        await runCollection(queue, selectedEnv, transport, proxyKey, abort.signal, setRunResults,
+          environment => { void saveEnvironment(environment); },
+          transport === 'proxy' && cookieJarEnabled ? { cookies, onChange: persistCookies } : undefined, agentToken);
+      }
+    } catch (cause) { notify(cause instanceof Error ? cause.message : 'Collection Runner failed.'); }
     finally { setRunning(false); runnerRef.current = null; }
   };
   const uploadCloud = async () => {
@@ -628,7 +643,35 @@ export default function App() {
          onPair={() => setModal('agent')} collections={collections} defaultCollectionId={draft.collectionId}
          preset={grpcPresets.find(item => item.id === activeGrpcId)}
          onSave={saveGrpcPreset} onDelete={deleteGrpcPreset} />}
-      {modal === 'runner' && <><p className="modal-note">Run every request in a collection sequentially, evaluate response assertions and download a JSON report. HTTP 4xx/5xx are responses, not transport failures.</p><div className="environment-controls"><select className="form-input" value={runCollectionId} onChange={e => setRunCollectionId(e.target.value)}>{collections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select><button className="button primary" onClick={() => void startRunner()}>{running ? 'Cancel run' : 'Run collection'}</button></div><div className="run-results">{runResults.map(r => <div className="run-line" key={r.requestId}><strong className="truncate">{r.name}</strong><span className={r.error || r.assertions.some(x => !x.passed) || (r.status && r.status >= 400) ? 'error-color' : 'success-color'}>{r.error || `${r.status} · ${r.duration}ms · ${r.assertions.filter(x => x.passed).length}/${r.assertions.length} tests`}</span></div>)}</div><div className="modal-footer"><button className="button outlined" disabled={!runResults.length} onClick={() => downloadJson('reqdock-test-report.json', { createdAt: new Date().toISOString(), results: runResults })}><Download size={14} /> Export report</button><button className="button outlined" onClick={() => setModal(null)}>Close</button></div></>}
+      {modal === 'runner' && <>
+        <p className="modal-note">Run saved requests sequentially. Choose HTTP for the original request/assertion runner, or gRPC for Unary, Server Streaming, Client Streaming and Bidirectional calls via Local Agent.</p>
+        <div className="grpc-source-selector" role="group" aria-label="Collection Runner protocol">
+          <button type="button" disabled={running} className={runnerProtocol === 'http' ? 'active' : ''} onClick={() => setRunnerProtocol('http')}>HTTP</button>
+          <button type="button" disabled={running} className={runnerProtocol === 'grpc' ? 'active' : ''} onClick={() => setRunnerProtocol('grpc')}>gRPC</button>
+        </div>
+        {runnerProtocol === 'grpc' && <p className="modal-note">Requires the paired Local Agent. Client/Bidi RPCs send the saved JSON request (or a JSON array of messages), then half-close automatically. gRPC response data and credentials are never written to the exported report.</p>}
+        <div className="environment-controls">
+          <select className="form-input" aria-label="Run collection" disabled={running} value={runCollectionId} onChange={e => setRunCollectionId(e.target.value)}>
+            {collections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <button className="button primary" onClick={() => void startRunner()}>{running ? 'Cancel run' : 'Run collection'}</button>
+        </div>
+        {runnerProtocol === 'http' ? <div className="run-results">{runResults.map(r =>
+          <div className="run-line" key={r.requestId}><strong className="truncate">{r.name}</strong>
+          <span className={r.error || r.assertions.some(x => !x.passed) || (r.status && r.status >= 400) ? 'error-color' : 'success-color'}>
+            {r.error || `${r.status} · ${r.duration}ms · ${r.assertions.filter(x => x.passed).length}/${r.assertions.length} tests`}</span></div>)}</div>
+         : <div className="run-results" aria-label="gRPC runner results">{grpcRunResults.map(r =>
+           <div className="run-line" key={r.requestId}><strong className="truncate">{r.name}<small className="grpc-run-mode">{r.mode}</small></strong>
+           <span className={r.error ? 'error-color' : 'success-color'}>{r.error || `OK · ${r.duration}ms · ${r.messageCount} response message(s)`}</span></div>)}</div>}
+        <div className="modal-footer">
+          <button className="button outlined" disabled={runnerProtocol === 'http' ? !runResults.length : !grpcRunResults.length}
+            onClick={() => downloadJson(runnerProtocol === 'http' ? 'reqdock-test-report.json' : 'reqdock-grpc-run-report.json',
+              { createdAt:new Date().toISOString(), protocol:runnerProtocol, results:runnerProtocol === 'http' ? runResults : grpcRunResults })}>
+            <Download size={14} /> Export report
+          </button>
+          <button className="button outlined" onClick={() => { runnerRef.current?.abort(); setModal(null); }}>Close</button>
+        </div>
+      </>}
       {modal === 'curl' && <><p className="modal-note">Paste a cURL command to populate URL, method, headers, and body. Unsupported options produce an error rather than being silently ignored.</p><textarea className="modal-textarea" placeholder={'curl -X POST https://api.example.com \\\n  -H "Content-Type: application/json" \\\n  -d \'{"hello":"world"}\''} value={curlText} onChange={e => setCurlText(e.target.value)} rows={8} /><div className="modal-footer"><button className="button outlined" onClick={() => setModal(null)}>Cancel</button><button className="button primary" onClick={onImportCurl}><Upload size={15} /> Import request</button></div></>}
       {modal === 'environment' && <><p className="modal-note">Variables can be used anywhere in a request as <code>{'{{variableName}}'}</code>. Values remain in this browser unless you export a backup.</p><div className="environment-controls"><select className="form-input" value={environmentId} onChange={e => setEnvironmentId(e.target.value)}><option value="">Select environment</option>{environments.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}</select><button className="button outlined" onClick={newEnvironment}><Plus size={14} /> New</button></div>{selectedEnv ? <><label className="field-label">Environment name</label><input className="form-input" value={selectedEnv.name} onChange={e => void saveEnvironment({ ...selectedEnv, name: e.target.value })} /><div className="environment-pairs"><PairEditor items={selectedEnv.variables} onChange={variables => void saveEnvironment({ ...selectedEnv, variables })} keyPlaceholder="Variable" valuePlaceholder="Value" /></div><button className="button danger outlined" onClick={() => void removeEnvironment()}><Trash2 size={14} /> Delete environment</button></> : <div className="modal-empty">Create or select an environment to edit its variables.</div>}<div className="modal-footer">{selectedEnv && <button className="button outlined" onClick={() => downloadJson(`${selectedEnv.name}.postman_environment.json`, exportPostmanEnvironment(selectedEnv))}><Download size={15} /> Export Postman</button>}<button className="button primary" onClick={() => setModal(null)}><Check size={15} /> Done</button></div></>}
       {modal === 'agent' && <>

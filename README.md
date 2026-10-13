@@ -1,5 +1,7 @@
 # ReqDock
 
+> **v1.4 gRPC Collection Runner:** Sequential local execution of saved Unary and all streaming RPCs. Interactive Client/Bidi requests use the saved JSON object, or an array of message objects, then automatically half-close. Includes progress, cancellation and credential-free JSON reports. Requires paired Local Agent; no cloud gRPC relay.
+
 > **v1.3 Complete workspace backups:** ReqDock JSON v3 backups and encrypted Cloudflare D1 snapshots now include saved gRPC RPCs, including imported Proto definitions and Metadata. Backward-compatible with v1/v2 backups. Cookie Jar and ephemeral Agent tokens remain excluded.
 
 > **v1.2 gRPC Client/Bidirectional Streaming:** Interactive RPC sessions via loopback Local Agent. Start, repeatedly send JSON messages, Half-close sending, and Cancel. Bidirectional response events stream incrementally. Sessions are memory-only, use the existing origin/token/host security policy, and expire after 40 seconds (gRPC deadline: 25 seconds).
@@ -261,3 +263,19 @@ local gRPC RPCs too (older snapshots have none).
 **Important:** Metadata may contain API credentials. Downloaded JSON exports are not encrypted
 and should be protected accordingly. Agent pairing tokens and Cookie Jar data remain excluded.
 Existing Cloudflare D1 schema and Pages configuration do not need changes.
+
+
+## gRPC Collection Runner (v1.4)
+
+Open Collection Runner, choose **gRPC**, select a Collection and click **Run collection**.
+Requires Local Agent running with the target hosts in its allowlist and an in-memory pairing token.
+Unary, Server Streaming, Client Streaming and Bidirectional Streaming are executed sequentially.
+For client/bidirectional RPCs, put a JSON object or an array of message objects in the saved RPC
+Request body. The Runner sends each item and automatically half-closes the input stream.
+
+The Runner retains only per-request status, duration, number of response messages and error
+message in the downloadable report, not request payloads, authorization metadata, Agent tokens
+or response content. HTTP Runner keeps its existing transport, assertions and environment
+capture behavior. Environment placeholders work for gRPC target, metadata and JSON body.
+The order of gRPC runs is ascending saved update timestamp, then name; HTTP and gRPC
+queues are distinct to avoid surprising cross-protocol executions.
