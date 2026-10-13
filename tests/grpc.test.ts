@@ -60,7 +60,7 @@ describe('gRPC unary implementation', () => {
   });
   it('rejects proto imports and streaming methods', () => {
     expect(()=>resolveUnaryMethod('syntax = "proto3"; import "google/protobuf/empty.proto"; service A { rpc Go(Empty) returns (Empty); }',
-      'A','Go')).toThrow('Imported');
+      'A','Go')).toThrow('Missing imported');
     const streaming='syntax = "proto3"; message Msg { string text = 1; } service Chat { rpc Watch(Msg) returns (stream Msg); }';
     expect(()=>resolveUnaryMethod(streaming,'Chat','Watch')).toThrow('Only unary');
   });

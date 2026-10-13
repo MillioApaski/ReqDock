@@ -501,3 +501,15 @@ input, textarea, select { color: var(--text); }
  .grpc-modal { padding:14px; }
  .grpc-actions { flex-wrap:wrap; }
 }
+
+/* v1.0 gRPC schema imports and reflection */
+.grpc-source-selector { display:flex; gap:4px; padding:3px; background:var(--panel-raised); border-radius:7px; width:fit-content; }
+.grpc-source-selector button { font-size:12px; border:0; color:var(--text-muted); background:transparent; padding:7px 12px; border-radius:5px; cursor:pointer; }
+.grpc-source-selector button.active { color:var(--text); background:var(--panel-bg); box-shadow:0 1px 4px rgba(0,0,0,.16); }
+.grpc-editor-buttons,.grpc-reflection-actions { display:flex; flex-wrap:wrap; gap:7px; }
+.grpc-reflection { display:grid; gap:12px; border:1px solid var(--line); border-radius:8px; padding:12px; }
+.grpc-reflection .field-label { display:grid; gap:6px; }
+.grpc-reflection select { width:100%; min-width:0; }
+.grpc-file-list { display:flex; flex-wrap:wrap; gap:6px; }
+.grpc-file-list span { font-size:11px; color:var(--text-muted); background:var(--panel-raised); border:1px solid var(--line-soft); padding:4px 7px; border-radius:5px; overflow-wrap:anywhere; }
+@media(max-width:690px){.grpc-editor-heading { align-items:flex-start; flex-direction:column; } }

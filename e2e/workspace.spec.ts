@@ -111,3 +111,18 @@ test('gRPC unary console offers proto import, target, RPC method and JSON editor
   await dialog.getByRole('button', { name:'Pair Agent' }).click();
   await expect(page.getByRole('dialog', { name:'Local Agent' })).toBeVisible();
 });
+
+
+test('gRPC supports local schema files and reflection selection', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name:'gRPC Console' }).click();
+  const dialog=page.getByRole('dialog', { name:'gRPC Console' });
+  await expect(dialog.getByRole('button', { name:'Local .proto files' })).toBeVisible();
+  await expect(dialog.getByRole('button', { name:'Choose files' })).toBeVisible();
+  await dialog.getByRole('button', { name:'Server Reflection' }).click();
+  await expect(dialog.getByRole('button', { name:'List services' })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name:'Load RPC methods' })).toBeDisabled();
+  await expect(dialog.getByText('reflection API')).toBeVisible();
+  await dialog.getByRole('button', { name:'Local .proto files' }).click();
+  await expect(dialog.getByLabel('gRPC proto')).toBeVisible();
+});
