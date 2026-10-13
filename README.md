@@ -153,20 +153,20 @@ AES-256-GCM encryption runs in the browser, using a key derived with PBKDF2-SHA-
 
 From a terminal **on the computer running your browser**, clone this repository and start:
 
-\`\`\`bash
+```bash
 npm install
 npm run agent
 # For a specific private API:
 npm run agent -- --allow-hosts=192.168.1.100,api.home.test
-\`\`\`
+```
 
-The Agent listens only on \`http://127.0.0.1:47831\`, including when you allow a LAN destination.
-It allows \`localhost\`, \`127.0.0.1\`, \`[::1]\` by default; other **target hosts** must be explicitly listed.
+The Agent listens only on `http://127.0.0.1:47831`, including when you allow a LAN destination.
+It allows `localhost`, `127.0.0.1`, `[::1]` by default; other **target hosts** must be explicitly listed.
 Copy the one-time terminal token into **ReqDock → Agent → Agent settings → Test connection → Use Local Agent**.
 Pairing tokens are never exported, cloud-synced or persisted in browser storage. Restarting the Agent generates a new token.
 
-Production browser Origin \`https://reqdock.convert-alpha.cc\` and Vite local dev origins are allowed by default.
-For another hosted ReqDock domain add \`--allow-origins=https://your-domain.example\`.
+Production browser Origin `https://reqdock.convert-alpha.cc` and Vite local dev origins are allowed by default.
+For another hosted ReqDock domain add `--allow-origins=https://your-domain.example`.
 The local agent checks the browser Origin and request Host, requires the token, never follows upstream redirects,
 limits body/response sizes and blocks forwarding to its own port.
 Do not reverse-proxy or publish port 47831. This is a loopback-only connector, not a public API server.
@@ -177,7 +177,7 @@ This transport supports HTTP(S) methods, headers, auth, GraphQL, request bodies,
 and multipart (one file, up to 2 MiB). It does **not** tunnel WebSocket/gRPC or override certificate validation.
 Direct continues to obey the browser's CORS policy; Cloud Proxy still requires its original Cloudflare configuration.
 
-\`\`\`bash
+```bash
 npm test
 npm run build
-\`\`\`
+```

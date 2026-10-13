@@ -52,3 +52,37 @@ describe('cURL imports', () => {
     expect(() => importCurl('curl --negotiate https://api.example.com')).toThrow('Unsupported');
   });
 });
+
+
+describe('Local Agent request transport', () => {
+  it('requires pairing token before sending', async () => {
+    const fetchStub = vi.fn(); vi.stubGlobal('fetch', fetchStub);
+    try {
+      const { sendRequest } = await import('../src/lib/request');
+      await expect(sendRequest({ url:'http://localhost:3000/', method:'GET', headers:{} }, 'agent',
+        new AbortController().signal, '', undefined, '')).rejects.toThrow('not paired');
+      expect(fetchStub).not.toHaveBeenCalled();
+    } finally { vi.unstubAllGlobals(); }
+  });
+  it('sends the token exclusively to the local agent, not the target API', async () => {
+    const fetchStub = vi.fn(async () => Response.json({
+      status:200,statusText:'OK',headers:[],text:'{"ok":true}',contentType:'application/json',duration:1,size:11,
+    }));
+    vi.stubGlobal('fetch',fetchStub);
+    try {
+      const { sendRequest } = await import('../src/lib/request');
+      const response = await sendRequest({ url:'http://localhost:3000/', method:'GET', headers:{Authorization:'Bearer api-token'} },
+        'agent', new AbortController().signal, '', undefined, 'local-agent-token');
+      expect(response.status).toBe(200);
+      expect(fetchStub).toHaveBeenCalledTimes(1);
+      const [endpoint, config] = fetchStub.mock.calls[0];
+      expect(endpoint).toBe('http://127.0.0.1:47831/request');
+      expect(config.headers['X-ReqDock-Agent-Token']).toBe('local-agent-token');
+      expect(config.headers['X-ReqDock-Proxy-Key']).toBeUndefined();
+      const payload = JSON.parse(config.body);
+      expect(payload.url).toBe('http://localhost:3000/');
+      expect(payload.headers.Authorization).toBe('Bearer api-token');
+      expect(payload.headers['X-ReqDock-Agent-Token']).toBeUndefined();
+    } finally { vi.unstubAllGlobals(); }
+  });
+});

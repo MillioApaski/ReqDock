@@ -80,3 +80,17 @@ test('proxy cookie jar is opt-in and persists locally without using network', as
   await dialog.getByRole('button', { name: 'Delete cookie qa-session' }).click();
   await expect(dialog.getByText('qa-session')).toHaveCount(0);
 });
+
+
+test('Local Agent pairing UI keeps its token in tab memory only', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Agent', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Local Agent' });
+  await expect(dialog).toBeVisible();
+  const token = dialog.getByLabel('Agent pairing token');
+  await token.fill('temporary-key-never-persisted');
+  await expect(dialog.getByText('127.0.0.1:47831', { exact: false }).first()).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: 'Agent', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Local Agent' }).getByLabel('Agent pairing token')).toHaveValue('');
+});
