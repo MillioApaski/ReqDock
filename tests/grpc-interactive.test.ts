@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import * as grpc from '@grpc/grpc-js';
 import protobuf from 'protobufjs';
 import { createAgent } from '../agent/reqdock-agent.mjs';
+import { runGrpcCollection } from '../src/lib/grpc-runner';
 import { consumeGrpcStream } from '../src/lib/grpc-stream';
 
 const PROTO = [
@@ -102,5 +103,47 @@ describe('interactive gRPC session API',()=>{
     const received=[];
     await consumeGrpcStream(events.body,event=>received.push(event));
     expect(received.at(-1)).toMatchObject({type:'error',error:'gRPC session cancelled.'});
+  });
+});
+
+
+describe('gRPC Collection Runner: real client/bidi streaming', () => {
+  const preset=(port, method, callMode, message)=>({
+    id:'rpc-'+method, name:'Saved '+method, collectionId:'col',
+    updatedAt:1, target:'grpc://127.0.0.1:'+port,
+    proto:PROTO, protoFiles:[], entryName:'main.proto', source:'files',
+    service:'test.Chat', method, message, metadata:'{"authorization":"Bearer private-secret"}',
+    callMode,
+  });
+  it('sends a JSON array, half-closes and returns credential-free progress',async()=>{
+    const {base,rpcPort}=await setup();
+    const updates=[];
+    const results=await runGrpcCollection([
+      preset(rpcPort,'Collect','client-stream','[{"text":"one"},{"text":"two"}]'),
+      preset(rpcPort,'Talk','bidi','[{"text":"alpha"},{"text":"beta"}]'),
+    ],undefined,'test-secret',new AbortController().signal,{
+      endpoint:base, onProgress:items=>updates.push(items),
+    });
+    expect(results).toHaveLength(2);
+    expect(results[0]).toMatchObject({status:0,messageCount:1,mode:'client-stream'});
+    expect(results[1]).toMatchObject({status:0,messageCount:2,mode:'bidi'});
+    expect(updates).toHaveLength(2);
+    const report=JSON.stringify(results);
+    expect(report).not.toContain('private-secret');
+    expect(report).not.toContain('one|two');
+    expect(report).not.toContain('test-secret');
+  });
+  it('rejects missing Agent pairing and malformed client message arrays',async()=>{
+    const a=preset(50051,'Collect','client-stream','[1,2]');
+    const noToken=await runGrpcCollection([a],undefined,'',new AbortController().signal);
+    expect(noToken[0].error).toContain('not paired');
+    const invalid=await runGrpcCollection([a],undefined,'test-secret',new AbortController().signal);
+    expect(invalid[0].error).toContain('Stream messages');
+  });
+  it('does not execute any requests when cancelled before the run',async()=>{
+    const controller=new AbortController();controller.abort();
+    const items=await runGrpcCollection([preset(50051,'Collect','client-stream','{}')],
+      undefined,'test-secret',controller.signal);
+    expect(items).toEqual([]);
   });
 });

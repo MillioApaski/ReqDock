@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import * as grpc from '@grpc/grpc-js';
 import protobuf from 'protobufjs';
 import { createAgent } from '../agent/reqdock-agent.mjs';
+import { runGrpcCollection } from '../src/lib/grpc-runner';
 import { consumeGrpcStream } from '../src/lib/grpc-stream';
 
 const PROTO = [
@@ -82,5 +83,22 @@ describe('gRPC server streaming HTTP bridge',()=>{
     await consumeGrpcStream(res.body,event=>events.push(event));
     expect(events.at(-1)).toMatchObject({type:'error'});
     expect(events.at(-1).error).toContain('server-streaming');
+  });
+});
+
+
+describe('gRPC Collection Runner: Unary and Server Streaming', () => {
+  it('executes both modes sequentially and reports stream counts',async()=>{
+    const {port,rpcPort}=await setup();
+    const preset=(method,callMode)=>({
+      id:method,name:method,collectionId:'col',updatedAt:0,
+      target:'grpc://127.0.0.1:'+rpcPort,proto:PROTO,protoFiles:[],
+      entryName:'main.proto',source:'files',service:'sample.Updates',
+      method,callMode,message:'{"name":"update"}',metadata:'{}',
+    });
+    const result=await runGrpcCollection([preset('Echo','unary'),preset('Watch','server-stream')],
+      undefined,'test-stream-key',new AbortController().signal,{endpoint:'http://127.0.0.1:'+port});
+    expect(result.map(x=>({status:x.status,count:x.messageCount})))
+      .toEqual([{status:0,count:1},{status:0,count:3}]);
   });
 });
