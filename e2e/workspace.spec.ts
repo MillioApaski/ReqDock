@@ -126,3 +126,22 @@ test('gRPC supports local schema files and reflection selection', async ({ page 
   await dialog.getByRole('button', { name:'Local .proto files' }).click();
   await expect(dialog.getByLabel('gRPC proto')).toBeVisible();
 });
+
+
+test('saved gRPC RPC is listed in Collections and restored after reload', async ({ page }, testInfo) => {
+  await page.goto('/');
+  await page.getByRole('button', { name:'gRPC Console' }).click();
+  const dialog = page.getByRole('dialog', { name:'gRPC Console' });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('textbox', { name:'Saved gRPC name' }).fill('Demo Watch');
+  await dialog.getByRole('combobox', { name:'gRPC call mode' }).selectOption('server-stream');
+  await dialog.getByRole('button', { name:'Save', exact:true }).click();
+  await expect(dialog.getByText('Saved to collection.')).toBeVisible();
+  await dialog.getByTitle('Close').click();
+  await page.reload();
+  if (testInfo.project.name === 'mobile') await page.getByRole('button', { name:'Toggle menu' }).click();
+  await page.getByRole('button', { name:/RPC Demo Watch/ }).click();
+  const restored = page.getByRole('dialog', { name:'gRPC Console' });
+  await expect(restored.getByRole('textbox', { name:'Saved gRPC name' })).toHaveValue('Demo Watch');
+  await expect(restored.getByRole('combobox', { name:'gRPC call mode' })).toHaveValue('server-stream');
+});

@@ -513,3 +513,16 @@ input, textarea, select { color: var(--text); }
 .grpc-file-list { display:flex; flex-wrap:wrap; gap:6px; }
 .grpc-file-list span { font-size:11px; color:var(--text-muted); background:var(--panel-raised); border:1px solid var(--line-soft); padding:4px 7px; border-radius:5px; overflow-wrap:anywhere; }
 @media(max-width:690px){.grpc-editor-heading { align-items:flex-start; flex-direction:column; } }
+
+/* v1.1 gRPC streaming preview and locally saved RPC Collection items */
+.method-grpc { color:#bc93f9; }
+.grpc-save-row { display:flex; align-items:center; gap:7px; min-width:0; flex-wrap:wrap; }
+.grpc-save-row .form-input { min-width:140px; flex:1; font-size:12px; }
+.grpc-save-row .button { white-space:nowrap; }
+.grpc-mode-label { display:flex; align-items:center; gap:10px; font-size:12px; }
+.grpc-mode-label select { width:min(240px,100%); }
+.grpc-stream-messages { display:grid; gap:0; max-height:360px; overflow-y:auto; }
+.grpc-stream-item { display:flex; align-items:flex-start; gap:10px; border-top:1px solid var(--line-soft); padding:10px; }
+.grpc-stream-item small { flex:0 0 30px; color:var(--text-muted); }
+.grpc-stream-item pre { flex:1; min-width:0; margin:0; white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; }
+@media(max-width:690px) { .grpc-save-row .form-input { flex-basis:100%; } }

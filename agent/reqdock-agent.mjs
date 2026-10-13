@@ -8,6 +8,7 @@ import { createServer } from 'node:http';
 import { randomBytes, timingSafeEqual, randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { callGrpcUnary, discoverGrpcServices } from './grpc.mjs';
+import { streamGrpcServer } from './grpc-stream.mjs';
 
 const DEFAULT_PORT = 47831;
 const DEFAULT_ORIGINS = ['https://reqdock.convert-alpha.cc', 'http://localhost:5173', 'http://127.0.0.1:5173', 'http://127.0.0.1:4173'];
@@ -116,11 +117,34 @@ export function createAgent({ port = DEFAULT_PORT, token = randomBytes(32).toStr
       return res.end();
     }
     if (!constantTimeEquals(req.headers['x-reqdock-agent-token'], token)) return fail(res, 401, 'Invalid Local Agent token.', cors);
-    if (req.method === 'GET' && req.url === '/status') return json(res, 200, { ok: true, version: '1.0.0', allowedHosts: [...hosts] }, cors);
-    if (req.method !== 'POST' || !['/request', '/grpc/unary', '/grpc/discover'].includes(req.url)) return fail(res, 404, 'Not found.', cors);
+    if (req.method === 'GET' && req.url === '/status') return json(res, 200, { ok: true, version: '1.1.0', allowedHosts: [...hosts] }, cors);
+    if (req.method !== 'POST' || !['/request', '/grpc/unary', '/grpc/discover', '/grpc/stream'].includes(req.url)) return fail(res, 404, 'Not found.', cors);
     let data;
     try { data = JSON.parse((await limitedStream(req, MAX_REQUEST)).toString('utf8')); }
     catch (error) { return fail(res, error?.message === 'SIZE_LIMIT' ? 413 : 400, 'Invalid or oversized request JSON.', cors); }
+    if (req.url === '/grpc/stream') {
+      // application/x-ndjson keeps streaming responses incremental without a
+      // WebSocket server or buffering untrusted upstream output in memory.
+      res.writeHead(200, { ...cors, 'Content-Type':'application/x-ndjson; charset=utf-8',
+        'Cache-Control':'no-store', 'X-Content-Type-Options':'nosniff' });
+      const abort = new AbortController();
+      const disconnect = () => abort.abort();
+      res.on('close', disconnect);
+      try {
+        await streamGrpcServer(data, { allowedHosts:hosts, agentPort:listenPort },
+          event => {
+            if (res.destroyed || res.writableEnded) return false;
+            return res.write(JSON.stringify(event) + '\n');
+          }, abort.signal);
+      } catch (error) {
+        if (!res.destroyed && !res.writableEnded)
+          res.write(JSON.stringify({ type:'error', error:error instanceof Error ? error.message : 'gRPC stream failed.' }) + '\n');
+      } finally {
+        res.off('close', disconnect);
+        if (!res.destroyed && !res.writableEnded) res.end();
+      }
+      return;
+    }
     if (req.url === '/grpc/discover') {
       try {
         const response = await discoverGrpcServices(data, { allowedHosts: hosts, agentPort: listenPort });

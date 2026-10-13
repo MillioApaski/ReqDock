@@ -25,7 +25,7 @@ import { StreamConsole } from './components/StreamConsole';
 import { GrpcConsole } from './components/GrpcConsole';
 import { applySetCookies, cookieHeader, parseSetCookie } from './lib/cookies';
 import { LOCAL_AGENT_URL, decodeBase64, formatJson, paramsFromUrl, prepareRequest, sendRequest, setUrlParams } from './lib/request';
-import { blankPair, exampleRequest, newId, newRequest, type Environment, type HistoryItem, type HttpMethod, type KeyValue, type RequestModel, type SavedResponse, type Tab, type Transport, type Collection, type Folder, type Assertion, type CookieRecord } from './types';
+import { blankPair, exampleRequest, newId, newRequest, type Environment, type HistoryItem, type HttpMethod, type KeyValue, type RequestModel, type SavedResponse, type Tab, type Transport, type Collection, type Folder, type Assertion, type CookieRecord, type GrpcRequestPreset } from './types';
 
 type SidebarSection = 'collections' | 'history';
 type Modal = 'curl' | 'environment' | 'proxy' | 'runner' | 'stream' | 'sync' | 'cookies' | 'agent' | 'grpc' | null;
@@ -40,6 +40,8 @@ export default function App() {
   const [ready, setReady] = useState(false);
   const [requests, setRequests] = useState<RequestModel[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
+  const [grpcPresets, setGrpcPresets] = useState<GrpcRequestPreset[]>([]);
+  const [activeGrpcId, setActiveGrpcId] = useState<string | null>(null);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [expanded, setExpanded] = useState<string[]>([]);
   const [runResults, setRunResults] = useState<RunResult[]>([]);
@@ -105,7 +107,7 @@ export default function App() {
       try {
         let saved = await db.requests.orderBy('updatedAt').reverse().toArray();
         if (!saved.length) { const sample = exampleRequest(); await db.requests.put(sample); saved = [sample]; }
-        const [envs, previous, storedCookies] = await Promise.all([db.environments.toArray(), db.history.orderBy('at').reverse().limit(100).toArray(), db.cookies.toArray()]);
+        const [envs, previous, storedCookies, storedGrpcPresets] = await Promise.all([db.environments.toArray(), db.history.orderBy('at').reverse().limit(100).toArray(), db.cookies.toArray(), db.grpcRequests.toArray()]);
         let existingCollections = await db.collections.toArray();
         if (!existingCollections.length) {
           const defaultCollection: Collection = { id: newId(), name: 'My Collection', createdAt: Date.now() };
@@ -122,7 +124,7 @@ export default function App() {
         const first = saved.find(r => r.id === opened[0]) || saved[0];
         setOpenTabIds(opened);
         setRequests(saved); setDraft(first); setParams(paramsFromUrl(first.url));
-        setCookies(storedCookies); setEnvironments(envs); setHistory(previous); setCollections(existingCollections); setFolders(savedFolders); setExpanded(existingCollections.map(c => c.id).concat(savedFolders.map(f => f.id))); setRunCollectionId(existingCollections[0].id); setReady(true);
+        setGrpcPresets(storedGrpcPresets); setCookies(storedCookies); setEnvironments(envs); setHistory(previous); setCollections(existingCollections); setFolders(savedFolders); setExpanded(existingCollections.map(c => c.id).concat(savedFolders.map(f => f.id))); setRunCollectionId(existingCollections[0].id); setReady(true);
       } catch { if (mounted) { setError('IndexedDB is unavailable. Requests will not be saved between visits.'); setReady(true); } }
     })();
     return () => { mounted = false; };
@@ -200,17 +202,31 @@ export default function App() {
     const next = { ...collection, name };
     await db.collections.put(next); setCollections(old => old.map(c => c.id === next.id ? next : c));
   };
+  const saveGrpcPreset = async (preset: GrpcRequestPreset) => {
+    await db.grpcRequests.put(preset);
+    setGrpcPresets(old => [...old.filter(item => item.id !== preset.id), preset]);
+  };
+  const deleteGrpcPreset = async (id: string) => {
+    await db.grpcRequests.delete(id);
+    setGrpcPresets(old => old.filter(item => item.id !== id));
+    setActiveGrpcId(null); setModal(null);
+  };
   const deleteCollection = async (collection: Collection) => {
     if (collections.length <= 1) { notify('Keep at least one collection'); return; }
     const target = collections.find(c => c.id !== collection.id)!;
     if (!window.confirm(`Delete collection "${collection.name}"? Its requests will move into "${target.name}".`)) return;
     const moved = requests.filter(r => r.collectionId === collection.id).map(r => ({ ...r, collectionId: target.id, folderId: undefined, updatedAt: Date.now() }));
-    await db.transaction('rw', db.collections, db.folders, db.requests, async () => {
+    const movedGrpc = grpcPresets.filter(item => item.collectionId === collection.id)
+      .map(item => ({ ...item, collectionId: target.id, updatedAt: Date.now() }));
+    await db.transaction('rw', db.collections, db.folders, db.requests, db.grpcRequests, async () => {
+      if (movedGrpc.length) await db.grpcRequests.bulkPut(movedGrpc);
       if (moved.length) await db.requests.bulkPut(moved);
       await db.folders.where('collectionId').equals(collection.id).delete();
       await db.collections.delete(collection.id);
     });
     setRequests(old => old.map(r => r.collectionId === collection.id ? { ...r, collectionId: target.id, folderId: undefined } : r));
+    if (movedGrpc.length) setGrpcPresets(old => old.map(item =>
+      item.collectionId === collection.id ? { ...item, collectionId: target.id } : item));
     setFolders(old => old.filter(f => f.collectionId !== collection.id));
     setCollections(old => old.filter(c => c.id !== collection.id));
     if (draft.collectionId === collection.id) updateDraft({ collectionId: target.id, folderId: undefined });
@@ -483,6 +499,13 @@ export default function App() {
   };
   const pretty = response ? formatJson(response.text) : '';
   const filtered = requests.filter(item => `${item.name} ${item.url} ${item.method}`.toLowerCase().includes(search.toLowerCase()));
+  const renderGrpcPreset = (item: GrpcRequestPreset) => <div className="request-list-item" key={item.id}>
+    <button className="request-item-main" onClick={() => { setActiveGrpcId(item.id); setModal('grpc'); setSidebarOpen(false); }}>
+      <span className="request-method method-grpc">RPC</span><span className="truncate">{item.name}</span>
+    </button>
+    <button className="icon-button subtle delete-on-hover" title="Delete saved gRPC request"
+      onClick={() => { if (window.confirm('Delete "' + item.name + '"?')) void deleteGrpcPreset(item.id); }}><Trash2 size={13}/></button>
+  </div>;
   const renderRequest = (item: RequestModel) => <div className={`request-list-item ${item.id === draft.id ? 'active' : ''}`} key={item.id}>
     <button className="request-item-main" onClick={() => selectRequest(item)}><span className={`request-method ${methodClasses[item.method]}`}>{item.method}</span><span className="truncate">{item.name}</span></button>
     <button className="icon-button subtle delete-on-hover" title="Delete request" onClick={() => void deleteRequest(item)}><Trash2 size={13} /></button>
@@ -508,8 +531,9 @@ export default function App() {
         <div className="sidebar-search"><Search size={15} /><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search requests..." aria-label="Search requests" /></div>
         <div className="request-list">{collections.map(col => <div className="collection-tree" key={col.id}>
           <div className="tree-heading"><button onClick={() => toggleExpand(col.id)}><ChevronDown size={13} className={expanded.includes(col.id) ? '' : 'collapsed'} /><FolderOpen size={15} /><span className="truncate">{col.name}</span></button><button className="icon-button subtle delete-on-hover" title="Rename collection" onClick={() => void renameCollection(col)}><Settings2 size={13} /></button><button className="icon-button subtle delete-on-hover" title="Delete collection" onClick={() => void deleteCollection(col)}><Trash2 size={13} /></button><button className="icon-button subtle delete-on-hover" title="Add folder" onClick={() => void addFolder(col.id)}><FolderPlus size={14} /></button><button className="icon-button subtle delete-on-hover" title="Add request" onClick={() => addRequest(col.id, undefined)}><Plus size={14} /></button></div>
-          {expanded.includes(col.id) && <div className="tree-children">{renderFolders(col.id)}{filtered.filter(r => r.collectionId === col.id && !r.folderId).map(renderRequest)}</div>}
-        </div>)}{!filtered.length && <div className="empty-sidebar">No matching requests</div>}</div>
+          {expanded.includes(col.id) && <div className="tree-children">{renderFolders(col.id)}{filtered.filter(r => r.collectionId === col.id && !r.folderId).map(renderRequest)}{grpcPresets.filter(g => g.collectionId === col.id &&
+            `${g.name} ${g.target} ${g.service}`.toLowerCase().includes(search.toLowerCase())).map(renderGrpcPreset)}</div>}
+        </div>)}{!filtered.length && !grpcPresets.some(g => `${g.name} ${g.target} ${g.service}`.toLowerCase().includes(search.toLowerCase())) && <div className="empty-sidebar">No matching requests</div>}</div>
       </> : <div className="request-list history-list">{history.map(item => <button className="history-item" key={item.id} onClick={() => selectRequest({ ...item.request, id: newId(), updatedAt: Date.now() })}>
         <div><span className={`request-method ${methodClasses[item.request.method]}`}>{item.request.method}</span><span className="truncate">{item.request.name}</span></div>
         <small>{new Date(item.at).toLocaleString()} <span className={item.error ? 'error-color' : 'success-color'}>{item.error ? 'Failed' : item.status}</span></small>
@@ -536,7 +560,7 @@ export default function App() {
         <button className="workspace-tab-add" type="button" title="New request tab" aria-label="New request tab" onClick={() => addRequest()}><Plus size={16} /></button>
       </div>
       <div className="content">
-        <div className="content-heading"><div><div className="eyebrow">API WORKSPACE <span className="eyebrow-dot">·</span> REQUEST BUILDER</div><div className="heading-line"><input aria-label="Request name" className="request-title" value={draft.name} onChange={e => updateDraft({ name: e.target.value })} /><span className="saved-pill"><Check size={12} /> Local</span></div><p>Compose, send, and inspect HTTP requests in one place.</p><div className="request-location"><select aria-label="Request collection" value={draft.collectionId || ''} onChange={e => moveRequest(e.target.value)}>{collections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select><select aria-label="Request folder" value={draft.folderId || ''} onChange={e => moveRequest(draft.collectionId || '', e.target.value || undefined)}><option value="">Collection root</option>{folders.filter(f => f.collectionId === draft.collectionId).map(f => <option key={f.id} value={f.id}>{f.name}</option>)}</select></div></div><div className="request-actions"><button className="icon-button" aria-label="gRPC Console" title="gRPC Unary Console (Local Agent)" onClick={() => setModal('grpc')}><Network size={17} /></button><button className="button outlined" onClick={() => setModal('stream')}><Activity size={15} /> Live</button><button className="button outlined" onClick={() => { setModal('runner'); setRunCollectionId(draft.collectionId || collections[0]?.id || ''); }}><Play size={15} /> Run</button><button className="button outlined" onClick={() => { void db.requests.put(draft); notify('Saved locally'); }}><Save size={15} /> Save</button><div className="dropdown"><button className="button outlined" onClick={() => setModal('curl')}><Terminal size={15} /> Import cURL</button></div><button className="icon-button" title="Copy as cURL" onClick={copyCurl}><Copy size={17} /></button></div></div>
+        <div className="content-heading"><div><div className="eyebrow">API WORKSPACE <span className="eyebrow-dot">·</span> REQUEST BUILDER</div><div className="heading-line"><input aria-label="Request name" className="request-title" value={draft.name} onChange={e => updateDraft({ name: e.target.value })} /><span className="saved-pill"><Check size={12} /> Local</span></div><p>Compose, send, and inspect HTTP requests in one place.</p><div className="request-location"><select aria-label="Request collection" value={draft.collectionId || ''} onChange={e => moveRequest(e.target.value)}>{collections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select><select aria-label="Request folder" value={draft.folderId || ''} onChange={e => moveRequest(draft.collectionId || '', e.target.value || undefined)}><option value="">Collection root</option>{folders.filter(f => f.collectionId === draft.collectionId).map(f => <option key={f.id} value={f.id}>{f.name}</option>)}</select></div></div><div className="request-actions"><button className="icon-button" aria-label="gRPC Console" title="gRPC Unary Console (Local Agent)" onClick={() => { setActiveGrpcId(null); setModal('grpc'); }}><Network size={17} /></button><button className="button outlined" onClick={() => setModal('stream')}><Activity size={15} /> Live</button><button className="button outlined" onClick={() => { setModal('runner'); setRunCollectionId(draft.collectionId || collections[0]?.id || ''); }}><Play size={15} /> Run</button><button className="button outlined" onClick={() => { void db.requests.put(draft); notify('Saved locally'); }}><Save size={15} /> Save</button><div className="dropdown"><button className="button outlined" onClick={() => setModal('curl')}><Terminal size={15} /> Import cURL</button></div><button className="icon-button" title="Copy as cURL" onClick={copyCurl}><Copy size={17} /></button></div></div>
         <div className="workspace-split" ref={splitRef} style={{ '--request-pane': `${paneRatio}%` } as CSSProperties}>
         <section className="request-box" aria-label="Request editor">
           <div className="request-url-row"><div className="method-select-wrap"><select aria-label="HTTP method" className={methodClasses[draft.method]} value={draft.method} onChange={e => updateDraft({ method: e.target.value as HttpMethod })}>{METHODS.map(method => <option key={method}>{method}</option>)}</select><ChevronDown size={13} /></div><input className="url-input" aria-label="Request URL" spellCheck={false} placeholder="Enter request URL or {{baseUrl}}/api/..." value={draft.url} onChange={e => changeUrl(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void execute(); }} /><button className={`send-button ${sending ? 'sending' : ''}`} onClick={() => void execute()}>{sending ? <><X size={16} /> Cancel</> : <><Send size={16} /> Send</>}</button></div>
@@ -594,7 +618,10 @@ export default function App() {
        </>}
        {modal === 'sync' && <><div className="proxy-info"><ShieldAlert size={18} /><div><strong>Encrypted, opt-in workspace backup</strong><p>AES-256-GCM encryption takes place in your browser. Cloudflare D1 stores only ciphertext. You must configure the D1 binding and a separate sync authentication key; neither secret nor passphrase is saved.</p></div></div><label className="field-label">Server sync key</label><input className="form-input" type="password" autoComplete="off" value={syncKey} onChange={e => setSyncKey(e.target.value)} placeholder="REQDOCK_SYNC_KEY" /><label className="field-label">Encryption passphrase (12+ characters)</label><input className="form-input" type="password" autoComplete="off" value={syncPassphrase} onChange={e => setSyncPassphrase(e.target.value)} placeholder="Your private encryption passphrase" /><p className="modal-note">Uploading overwrites the single remote snapshot. Restoring replaces local requests and settings after confirmation. Forgotten encryption passphrases cannot be recovered. D1 binding: <code>REQDOCK_DB</code>.</p><div className="modal-footer"><button className="button outlined" disabled={syncBusy || !syncKey || syncPassphrase.length < 12} onClick={() => void restoreCloud()}><Download size={14} /> Restore cloud</button><button className="button primary" disabled={syncBusy || !syncKey || syncPassphrase.length < 12} onClick={() => void uploadCloud()}><Upload size={14} /> Upload encrypted snapshot</button></div></>}
       {modal === 'stream' && <StreamConsole initialUrl={draft.url} onClose={() => setModal(null)} />}
-       {modal === 'grpc' && <GrpcConsole agentToken={agentToken} onPair={() => setModal('agent')} />}
+       {modal === 'grpc' && <GrpcConsole key={activeGrpcId || 'new'} agentToken={agentToken}
+         onPair={() => setModal('agent')} collections={collections} defaultCollectionId={draft.collectionId}
+         preset={grpcPresets.find(item => item.id === activeGrpcId)}
+         onSave={saveGrpcPreset} onDelete={deleteGrpcPreset} />}
       {modal === 'runner' && <><p className="modal-note">Run every request in a collection sequentially, evaluate response assertions and download a JSON report. HTTP 4xx/5xx are responses, not transport failures.</p><div className="environment-controls"><select className="form-input" value={runCollectionId} onChange={e => setRunCollectionId(e.target.value)}>{collections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select><button className="button primary" onClick={() => void startRunner()}>{running ? 'Cancel run' : 'Run collection'}</button></div><div className="run-results">{runResults.map(r => <div className="run-line" key={r.requestId}><strong className="truncate">{r.name}</strong><span className={r.error || r.assertions.some(x => !x.passed) || (r.status && r.status >= 400) ? 'error-color' : 'success-color'}>{r.error || `${r.status} · ${r.duration}ms · ${r.assertions.filter(x => x.passed).length}/${r.assertions.length} tests`}</span></div>)}</div><div className="modal-footer"><button className="button outlined" disabled={!runResults.length} onClick={() => downloadJson('reqdock-test-report.json', { createdAt: new Date().toISOString(), results: runResults })}><Download size={14} /> Export report</button><button className="button outlined" onClick={() => setModal(null)}>Close</button></div></>}
       {modal === 'curl' && <><p className="modal-note">Paste a cURL command to populate URL, method, headers, and body. Unsupported options produce an error rather than being silently ignored.</p><textarea className="modal-textarea" placeholder={'curl -X POST https://api.example.com \\\n  -H "Content-Type: application/json" \\\n  -d \'{"hello":"world"}\''} value={curlText} onChange={e => setCurlText(e.target.value)} rows={8} /><div className="modal-footer"><button className="button outlined" onClick={() => setModal(null)}>Cancel</button><button className="button primary" onClick={onImportCurl}><Upload size={15} /> Import request</button></div></>}
       {modal === 'environment' && <><p className="modal-note">Variables can be used anywhere in a request as <code>{'{{variableName}}'}</code>. Values remain in this browser unless you export a backup.</p><div className="environment-controls"><select className="form-input" value={environmentId} onChange={e => setEnvironmentId(e.target.value)}><option value="">Select environment</option>{environments.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}</select><button className="button outlined" onClick={newEnvironment}><Plus size={14} /> New</button></div>{selectedEnv ? <><label className="field-label">Environment name</label><input className="form-input" value={selectedEnv.name} onChange={e => void saveEnvironment({ ...selectedEnv, name: e.target.value })} /><div className="environment-pairs"><PairEditor items={selectedEnv.variables} onChange={variables => void saveEnvironment({ ...selectedEnv, variables })} keyPlaceholder="Variable" valuePlaceholder="Value" /></div><button className="button danger outlined" onClick={() => void removeEnvironment()}><Trash2 size={14} /> Delete environment</button></> : <div className="modal-empty">Create or select an environment to edit its variables.</div>}<div className="modal-footer">{selectedEnv && <button className="button outlined" onClick={() => downloadJson(`${selectedEnv.name}.postman_environment.json`, exportPostmanEnvironment(selectedEnv))}><Download size={15} /> Export Postman</button>}<button className="button primary" onClick={() => setModal(null)}><Check size={15} /> Done</button></div></>}

@@ -1,5 +1,7 @@
 # ReqDock
 
+> **v1.1 gRPC Server Streaming + saved RPC requests:** Receive incremental server-stream messages with cancel/timeout/bounds. Save gRPC request definitions into local Collections (IndexedDB), reopen and edit them. Local Agent pair tokens are never stored. Client/bidi streams and gRPC Runner remain unsupported.
+
 > **v1.0 gRPC schema discovery:** Supports multi-file Proto imports (including folder selection) and gRPC reflection using the paired Local Agent. No imported Proto is read from the Agent filesystem. Reflection requires the destination service to enable standard reflection, and reuses the Agent allowlist and TLS policy.
 
 > **v0.9 gRPC Unary:** A standalone RPC console using Local Agent and self-contained `.proto` definitions. Import a `.proto`, enter `grpc://host:port` or `grpcs://host:port`, the fully qualified service/method and a JSON request body. Unary only, max 2 MiB response, 25s deadline. Local Agent must be running and paired; the target host must be allowlisted. No TLS bypass, file imports, reflection or streaming yet.
@@ -211,3 +213,18 @@ For existing gRPC APIs using \`import "google/protobuf/empty.proto";\`, provide 
 - Choose **Server Reflection**, then **List services**, choose one and **Load RPC methods**. Only unary methods can be invoked. Authentication metadata is used for reflection as well.
 - Reflection sends a standard gRPC request to the target over the Local Agent's allowlisted connection. It does not enumerate arbitrary hosts.
 - gRPC streaming, service persistence and multi-device conflict merges remain out of scope in this version.
+
+
+## gRPC Server Streaming & saved requests (v1.1)
+Open the gRPC Console, select **Call mode → Server Streaming** to receive numbered messages
+incrementally over a local NDJSON response. The **Cancel** button aborts the HTTP stream and
+cancels the upstream gRPC call. The Agent imposes a 25-second deadline, 100-message cap
+and 2 MiB JSON preview limit. Long-running streams beyond these limits are intentionally unsupported.
+
+Save RPC settings with a name and Collection via **Save** in gRPC Console. They appear as
+purple RPC entries under the chosen Collection; clicking reopens the saved definition.
+The Agent pairing token is **never** saved. Proto source, JSON request and metadata
+(including any authorization values) are stored unencrypted in browser IndexedDB:
+do not use on a shared or untrusted browser. Saved gRPC definitions are currently
+not included in existing JSON workspace backups or D1 cloud snapshots, and
+the HTTP Collection Runner does not execute them.

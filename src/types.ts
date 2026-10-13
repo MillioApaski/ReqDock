@@ -23,6 +23,22 @@ export type RequestModel = {
   preScript?: string;
   postScript?: string;
 };
+export type GrpcRequestPreset = {
+  id: string;
+  name: string;
+  collectionId: string;
+  updatedAt: number;
+  target: string;
+  proto: string;
+  entryName: string;
+  protoFiles: { name: string; content: string }[];
+  source: 'files' | 'reflection';
+  service: string;
+  method: string;
+  message: string;
+  metadata: string;
+  callMode: 'unary' | 'server-stream';
+};
 export type Collection = { id: string; name: string; createdAt: number };
 export type Folder = { id: string; name: string; collectionId: string; parentId?: string };
 export type Assertion = { id: string; kind: 'status' | 'duration' | 'json' | 'header' | 'contains'; target: string; expected: string };
