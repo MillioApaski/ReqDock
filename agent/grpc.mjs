@@ -1,5 +1,7 @@
 import * as grpc from '@grpc/grpc-js';
 import protobuf from 'protobufjs';
+import { parseProtoFiles } from './grpc-schema.mjs';
+import { getGrpcReflectionRoot, discoverGrpc } from './grpc-reflection.mjs';
 
 export const GRPC_PROTO_LIMIT = 128 * 1024;
 export const GRPC_MESSAGE_LIMIT = 2 * 1024 * 1024;
@@ -24,29 +26,29 @@ export function validateGrpcTarget(raw, allowedHosts, agentPort) {
   return { host: url.hostname, port, tls: url.protocol === 'grpcs:' };
 }
 
-export function resolveUnaryMethod(protoText, serviceName, methodName) {
-  if (typeof protoText !== 'string' || Buffer.byteLength(protoText, 'utf8') > GRPC_PROTO_LIMIT) {
+export function resolveUnaryMethod(protoText, serviceName, methodName, protoFiles = [], entryName = 'main.proto', reflectionRoot) {
+  if (!reflectionRoot && (typeof protoText !== 'string' || Buffer.byteLength(protoText, 'utf8') > GRPC_PROTO_LIMIT)) {
     throw Error('Inline .proto must be at most 128 KiB.');
   }
-  if (!protoText.trim()) throw Error('Upload or paste a .proto definition.');
+  if (!reflectionRoot && !protoText.trim()) throw Error('Upload or paste a .proto definition.');
   if (typeof serviceName !== 'string' || !/^[\w.]{1,200}$/.test(serviceName) ||
       typeof methodName !== 'string' || !/^[A-Za-z_]\w{0,127}$/.test(methodName)) {
     throw Error('Enter a valid fully qualified service name and RPC method.');
   }
-  const parsed = protobuf.parse(protoText, { keepCase: true });
-  // Untrusted client input never causes filesystem or remote proto imports.
-  if ((parsed.imports || []).length || (parsed.weakImports || []).length) throw Error('Imported .proto files are not supported in this version. Use a self-contained definition.');
-  const root = parsed.root;
+  // All imports are resolved exclusively from files explicitly uploaded by the user.
+  // The agent NEVER reads .proto imports from its host filesystem or network.
+  const root = reflectionRoot || parseProtoFiles(protoText, protoFiles, entryName);
   root.resolveAll();
   const service = root.lookupService(serviceName);
   const method = service.methods[methodName];
   if (!method) throw Error('Method does not exist in this service.');
   if (method.requestStream || method.responseStream) throw Error('Only unary gRPC methods are supported.');
   return { root, method, path: '/' + service.fullName.slice(1) + '/' + method.name,
-    requestType: root.lookupType(method.requestType), responseType: root.lookupType(method.responseType) };
+    requestType: method.resolvedRequestType || root.lookupType(method.requestType),
+    responseType: method.resolvedResponseType || root.lookupType(method.responseType) };
 }
 
-function metadataFromObject(values) {
+export function metadataFromObject(values) {
   if (!values || typeof values !== 'object' || Array.isArray(values) || Object.keys(values).length > 40) {
     throw Error('Metadata must be a JSON object with at most 40 entries.');
   }
@@ -64,7 +66,13 @@ function metadataFromObject(values) {
 export async function callGrpcUnary(payload, { allowedHosts, agentPort, timeoutMs = DEADLINE_MS } = {}) {
   if (!payload || typeof payload !== 'object') throw Error('Invalid gRPC payload.');
   const target = validateGrpcTarget(payload.target, allowedHosts, agentPort);
-  const { requestType, responseType, path } = resolveUnaryMethod(payload.proto, payload.service, payload.method);
+  const reflectionRoot = payload.useReflection === true
+    ? await getGrpcReflectionRoot(payload, { allowedHosts, agentPort, metadataFactory: metadataFromObject })
+    : undefined;
+  const { requestType, responseType, path } = resolveUnaryMethod(
+    reflectionRoot ? '' : payload.proto, payload.service, payload.method,
+    payload.protoFiles || [], payload.entryName || 'main.proto', reflectionRoot,
+  );
   const input = payload.message ?? {};
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw Error('gRPC message must be a JSON object.');
   const message = requestType.fromObject(input);
@@ -104,3 +112,5 @@ export async function callGrpcUnary(payload, { allowedHosts, agentPort, timeoutM
     client.close();
   }
 }
+
+export const discoverGrpcServices = (payload, options) => discoverGrpc(payload, { ...options, metadataFactory: metadataFromObject });
