@@ -464,3 +464,12 @@ input, textarea, select { color: var(--text); }
 .cookie-entry small { margin-top:3px; font-size:11px; color:var(--text-muted); }
 .cookie-entry input { min-width:0; width:100%; border:1px solid var(--line); border-radius:5px; padding:6px; background:var(--field-bg); color:var(--text); }
 @media (max-width:690px) { .cookie-add-row { flex-wrap:wrap; } .cookie-add-row .form-input { flex-basis:100%; } .cookie-entry { grid-template-columns:minmax(0,1fr) 28px; } .cookie-entry input { grid-column:1; grid-row:2; } .cookie-entry button { grid-column:2; grid-row:1/3; } }
+
+/* Local Agent pairing panel: compact, scrollable within the existing dialog. */
+.agent-command { display:block; white-space:pre-wrap; overflow-wrap:anywhere; color:var(--text);
+  font-size:12px; padding:12px; border:1px solid var(--line); background:var(--editor-bg); border-radius:7px; margin:10px 0; user-select:all; }
+.agent-status { border-radius:7px; padding:10px 12px; font-size:12px; line-height:1.5; margin-top:12px; overflow-wrap:anywhere; }
+.agent-ok { color:var(--green); background:rgba(66,191,140,.09); }
+.agent-error { color:var(--yellow); background:rgba(232,185,98,.09); }
+.transport-toggle { gap:1px; }
+@media (max-width:690px) { .transport-toggle button { padding:5px 6px; font-size:10px; } .transport-toggle .proxy-settings { padding:5px; } }

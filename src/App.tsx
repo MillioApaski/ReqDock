@@ -6,7 +6,7 @@ import {
   Activity, ArrowDownToLine, Braces, Check, ChevronDown, Clock3, Cloud,
   Code2, Copy, Download, ExternalLink, FileJson, FolderOpen, Globe2, History,
   Layers2, Menu, Moon, Plus, Save, Search, Send, Settings2, FolderPlus, Folder as FolderIcon, Play,
-  ShieldAlert, SlidersHorizontal, Sun, Terminal, Trash2, Upload, X, Zap, Cookie,
+  ShieldAlert, SlidersHorizontal, Sun, Terminal, Trash2, Upload, X, Zap, Cookie, Laptop,
 } from 'lucide-react';
 import { PairEditor } from './components/PairEditor';
 import { db, persistHistory } from './lib/storage';
@@ -23,11 +23,11 @@ import { encryptBackup, decryptBackup, writeCloudSnapshot, readCloudSnapshot } f
 import { applyWorkflowScript } from './lib/script';
 import { StreamConsole } from './components/StreamConsole';
 import { applySetCookies, cookieHeader, parseSetCookie } from './lib/cookies';
-import { decodeBase64, formatJson, paramsFromUrl, prepareRequest, sendRequest, setUrlParams } from './lib/request';
+import { LOCAL_AGENT_URL, decodeBase64, formatJson, paramsFromUrl, prepareRequest, sendRequest, setUrlParams } from './lib/request';
 import { blankPair, exampleRequest, newId, newRequest, type Environment, type HistoryItem, type HttpMethod, type KeyValue, type RequestModel, type SavedResponse, type Tab, type Transport, type Collection, type Folder, type Assertion, type CookieRecord } from './types';
 
 type SidebarSection = 'collections' | 'history';
-type Modal = 'curl' | 'environment' | 'proxy' | 'runner' | 'stream' | 'sync' | 'cookies' | null;
+type Modal = 'curl' | 'environment' | 'proxy' | 'runner' | 'stream' | 'sync' | 'cookies' | 'agent' | null;
 const METHODS: HttpMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
 const methodClasses: Record<HttpMethod, string> = {
   GET: 'method-get', POST: 'method-post', PUT: 'method-put', PATCH: 'method-patch',
@@ -56,6 +56,10 @@ export default function App() {
   const [responseTab, setResponseTab] = useState<'pretty' | 'raw' | 'headers' | 'preview'>('pretty');
   const [transport, setTransport] = useState<Transport>('direct');
   const [proxyKey, setProxyKey] = useState('');
+  // Local Agent tokens remain in memory: never persist them to IndexedDB, localStorage or backups.
+  const [agentToken, setAgentToken] = useState('');
+  const [agentConnection, setAgentConnection] = useState<'idle' | 'checking' | 'online' | 'error'>('idle');
+  const [agentMessage, setAgentMessage] = useState('');
   const [cookieJarEnabled, setCookieJarEnabled] = useState(() => { try { return localStorage.getItem('reqdock-proxy-cookie-jar') === 'true'; } catch { return false; } });
   const [cookies, setCookies] = useState<CookieRecord[]>([]);
   const [newCookieName, setNewCookieName] = useState('');
@@ -277,6 +281,23 @@ export default function App() {
       setNewCookieName(''); setNewCookieValue(''); notify('Cookie saved locally');
     } catch { notify('Enter a valid absolute request URL before adding a cookie'); }
   };
+  const testAgent = async () => {
+    if (!agentToken) { setAgentConnection('error'); setAgentMessage('Enter the pairing token printed in the Local Agent terminal.'); return; }
+    setAgentConnection('checking'); setAgentMessage('');
+    try {
+      const res = await fetch(LOCAL_AGENT_URL + '/status', {
+        headers: { 'X-ReqDock-Agent-Token': agentToken },
+        signal: AbortSignal.timeout(5000), cache: 'no-store',
+      });
+      const data = await res.json() as { ok?: boolean; error?: string; allowedHosts?: string[] };
+      if (!res.ok || !data.ok) throw Error(data.error || 'Agent health check failed.');
+      setAgentConnection('online');
+      setAgentMessage('Connected. Allowed targets: ' + (data.allowedHosts || []).join(', '));
+    } catch (cause) {
+      setAgentConnection('error');
+      setAgentMessage(cause instanceof TypeError ? 'Local Agent unreachable. Start it on this computer and permit local network access in the browser.' : cause instanceof Error ? cause.message : 'Connection failed.');
+    }
+  };
   const execute = useCallback(async () => {
     if (sending) { abortRef.current?.abort(); return; }
     setError(''); setResponse(null); setResponseTab('pretty'); setScriptResults([]);
@@ -292,7 +313,7 @@ export default function App() {
     }
     const controller = new AbortController(); abortRef.current = controller; setSending(true);
     try {
-      const result = await sendRequest(prepared, transport, controller.signal, proxyKey, upload);
+      const result = await sendRequest(prepared, transport, controller.signal, proxyKey, upload, agentToken);
       if (transport === 'proxy' && cookieJarEnabled && result.setCookies?.length) {
         try { await persistCookies(applySetCookies(cookies, prepared.url, result.setCookies)); }
         catch { notify('Cookie could not be saved locally'); }
@@ -312,7 +333,7 @@ export default function App() {
       const item: HistoryItem = { id: newId(), at: Date.now(), request: structuredClone(draft), error: message };
       void persistHistory(item).then(() => setHistory(old => [item, ...old].slice(0, 100)));
     } finally { abortRef.current = null; setSending(false); }
-  }, [draft, selectedEnv, sending, transport, proxyKey, upload, cookies, cookieJarEnabled]);
+  }, [draft, selectedEnv, sending, transport, proxyKey, upload, cookies, cookieJarEnabled, agentToken]);
   const executeRef = useRef(execute);
   executeRef.current = execute;
   useEffect(() => {
@@ -326,7 +347,7 @@ export default function App() {
   const signInOAuth = async () => {
     setAuthorizing(true);
     try {
-      const token = await authorizePkce(draft.auth, transport, proxyKey);
+      const token = await authorizePkce(draft.auth, transport, proxyKey, agentToken);
       updateDraft({ auth: { ...draft.auth, token } });
       notify('OAuth access token received');
     } catch (error) { notify(error instanceof Error ? error.message : 'OAuth sign-in failed'); }
@@ -390,7 +411,7 @@ export default function App() {
     if (!queue.length) { notify('Collection has no requests'); return; }
     const abort = new AbortController(); runnerRef.current = abort;
     setRunning(true); setRunResults([]);
-    try { await runCollection(queue, selectedEnv, transport, proxyKey, abort.signal, setRunResults, environment => { void saveEnvironment(environment); }, transport === 'proxy' && cookieJarEnabled ? { cookies, onChange: persistCookies } : undefined); }
+    try { await runCollection(queue, selectedEnv, transport, proxyKey, abort.signal, setRunResults, environment => { void saveEnvironment(environment); }, transport === 'proxy' && cookieJarEnabled ? { cookies, onChange: persistCookies } : undefined, agentToken); }
     finally { setRunning(false); runnerRef.current = null; }
   };
   const uploadCloud = async () => {
@@ -518,7 +539,7 @@ export default function App() {
         <div className="workspace-split" ref={splitRef} style={{ '--request-pane': `${paneRatio}%` } as CSSProperties}>
         <section className="request-box" aria-label="Request editor">
           <div className="request-url-row"><div className="method-select-wrap"><select aria-label="HTTP method" className={methodClasses[draft.method]} value={draft.method} onChange={e => updateDraft({ method: e.target.value as HttpMethod })}>{METHODS.map(method => <option key={method}>{method}</option>)}</select><ChevronDown size={13} /></div><input className="url-input" aria-label="Request URL" spellCheck={false} placeholder="Enter request URL or {{baseUrl}}/api/..." value={draft.url} onChange={e => changeUrl(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') void execute(); }} /><button className={`send-button ${sending ? 'sending' : ''}`} onClick={() => void execute()}>{sending ? <><X size={16} /> Cancel</> : <><Send size={16} /> Send</>}</button></div>
-          <div className="request-options"><div className="tab-strip" role="tablist">{(['params','headers','auth','body','tests'] as Tab[]).map(tab => <button role="tab" aria-selected={activeTab === tab} className={`tab ${activeTab === tab ? 'active' : ''}`} key={tab} onClick={() => setActiveTab(tab)}>{tab === 'auth' ? 'Authorization' : tab.charAt(0).toUpperCase() + tab.slice(1)}{tab === 'headers' && draft.headers.filter(h => h.enabled && h.key).length > 0 && <span className="count-badge">{draft.headers.filter(h => h.enabled && h.key).length}</span>}</button>)}</div><div className="transport-toggle" title="Direct uses browser fetch; Cloud Proxy requires configuration"><button className={transport === 'direct' ? 'active' : ''} onClick={() => setTransport('direct')}><Zap size={13} /> Direct</button><button className={transport === 'proxy' ? 'active' : ''} onClick={() => setTransport('proxy')}><Cloud size={13} /> Proxy</button><button className="proxy-settings" title="Proxy settings" aria-label="Proxy settings" onClick={() => setModal('proxy')}><Settings2 size={14} /></button></div></div>
+          <div className="request-options"><div className="tab-strip" role="tablist">{(['params','headers','auth','body','tests'] as Tab[]).map(tab => <button role="tab" aria-selected={activeTab === tab} className={`tab ${activeTab === tab ? 'active' : ''}`} key={tab} onClick={() => setActiveTab(tab)}>{tab === 'auth' ? 'Authorization' : tab.charAt(0).toUpperCase() + tab.slice(1)}{tab === 'headers' && draft.headers.filter(h => h.enabled && h.key).length > 0 && <span className="count-badge">{draft.headers.filter(h => h.enabled && h.key).length}</span>}</button>)}</div><div className="transport-toggle" title="Direct uses browser fetch; Cloud Proxy runs at Cloudflare; Agent runs on this computer"><button className={transport === 'direct' ? 'active' : ''} onClick={() => setTransport('direct')}><Zap size={13} /> Direct</button><button className={transport === 'proxy' ? 'active' : ''} onClick={() => setTransport('proxy')}><Cloud size={13} /> Proxy</button><button className={transport === 'agent' ? 'active' : ''} onClick={() => { setTransport('agent'); if (!agentToken) setModal('agent'); }}><Laptop size={13} /> Agent</button><button className="proxy-settings" title={transport === 'agent' ? 'Local Agent settings' : 'Proxy settings'} aria-label={transport === 'agent' ? 'Local Agent settings' : 'Proxy settings'} onClick={() => setModal(transport === 'agent' ? 'agent' : 'proxy')}><Settings2 size={14} /></button></div></div>
           <div className="request-editor-content">
             {activeTab === 'params' && <><div className="panel-label"><strong>Query Parameters</strong><span>Parameters are reflected in the URL above.</span></div><PairEditor items={params} onChange={changeParams} /></>}
             {activeTab === 'headers' && <><div className="panel-label"><strong>Request Headers</strong><span>Use {'{{variable}}'} to reference the active environment.</span></div><PairEditor items={draft.headers} onChange={headers => updateDraft({ headers })} /></>}
@@ -562,7 +583,7 @@ export default function App() {
       </div>
     </main>
     {toast && <div className="toast"><Check size={16} /> {toast}</div>}
-    {modal && <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setModal(null); }}><div className="modal" role="dialog" aria-modal="true" aria-label={modal === 'curl' ? 'Import cURL' : modal === 'proxy' ? 'Proxy settings' : modal === 'runner' ? 'Collection runner' : modal === 'stream' ? 'WebSocket / SSE console' : modal === 'sync' ? 'Encrypted cloud backup' : modal === 'cookies' ? 'Cookie Jar' : 'Environments'}><div className="modal-header"><strong>{modal === 'curl' ? 'Import cURL' : modal === 'proxy' ? 'Cloud Proxy settings' : modal === 'runner' ? 'Collection runner' : modal === 'stream' ? 'WebSocket / SSE console' : modal === 'sync' ? 'Encrypted cloud backup' : modal === 'cookies' ? 'Cookie Jar' : 'Manage environments'}</strong><button className="icon-button" onClick={() => setModal(null)} title="Close"><X size={18} /></button></div>
+    {modal && <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setModal(null); }}><div className="modal" role="dialog" aria-modal="true" aria-label={modal === 'curl' ? 'Import cURL' : modal === 'proxy' ? 'Proxy settings' : modal === 'runner' ? 'Collection runner' : modal === 'stream' ? 'WebSocket / SSE console' : modal === 'sync' ? 'Encrypted cloud backup' : modal === 'cookies' ? 'Cookie Jar' : modal === 'agent' ? 'Local Agent' : 'Environments'}><div className="modal-header"><strong>{modal === 'curl' ? 'Import cURL' : modal === 'proxy' ? 'Cloud Proxy settings' : modal === 'runner' ? 'Collection runner' : modal === 'stream' ? 'WebSocket / SSE console' : modal === 'sync' ? 'Encrypted cloud backup' : modal === 'cookies' ? 'Cookie Jar' : modal === 'agent' ? 'Local Agent' : 'Manage environments'}</strong><button className="icon-button" onClick={() => setModal(null)} title="Close"><X size={18} /></button></div>
       {modal === 'cookies' && <>
          <div className="proxy-info"><ShieldAlert size={18} /><div><strong>Cloud Proxy cookie jar</strong><p>Opt-in only. Matching cookies are automatically sent to the exact host in Proxy mode. Values remain unencrypted in your browser's IndexedDB, even if marked HttpOnly. Not browser-enforced HttpOnly protection. Avoid on shared computers. Direct mode follows browser cookie rules and cannot inspect Set-Cookie.</p></div></div>
          <label className="cookie-toggle"><input type="checkbox" checked={cookieJarEnabled} onChange={event => setCookieJarEnabled(event.target.checked)} /> Enable Cloud Proxy cookie capture and sending</label>
@@ -575,7 +596,18 @@ export default function App() {
       {modal === 'runner' && <><p className="modal-note">Run every request in a collection sequentially, evaluate response assertions and download a JSON report. HTTP 4xx/5xx are responses, not transport failures.</p><div className="environment-controls"><select className="form-input" value={runCollectionId} onChange={e => setRunCollectionId(e.target.value)}>{collections.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select><button className="button primary" onClick={() => void startRunner()}>{running ? 'Cancel run' : 'Run collection'}</button></div><div className="run-results">{runResults.map(r => <div className="run-line" key={r.requestId}><strong className="truncate">{r.name}</strong><span className={r.error || r.assertions.some(x => !x.passed) || (r.status && r.status >= 400) ? 'error-color' : 'success-color'}>{r.error || `${r.status} · ${r.duration}ms · ${r.assertions.filter(x => x.passed).length}/${r.assertions.length} tests`}</span></div>)}</div><div className="modal-footer"><button className="button outlined" disabled={!runResults.length} onClick={() => downloadJson('reqdock-test-report.json', { createdAt: new Date().toISOString(), results: runResults })}><Download size={14} /> Export report</button><button className="button outlined" onClick={() => setModal(null)}>Close</button></div></>}
       {modal === 'curl' && <><p className="modal-note">Paste a cURL command to populate URL, method, headers, and body. Unsupported options produce an error rather than being silently ignored.</p><textarea className="modal-textarea" placeholder={'curl -X POST https://api.example.com \\\n  -H "Content-Type: application/json" \\\n  -d \'{"hello":"world"}\''} value={curlText} onChange={e => setCurlText(e.target.value)} rows={8} /><div className="modal-footer"><button className="button outlined" onClick={() => setModal(null)}>Cancel</button><button className="button primary" onClick={onImportCurl}><Upload size={15} /> Import request</button></div></>}
       {modal === 'environment' && <><p className="modal-note">Variables can be used anywhere in a request as <code>{'{{variableName}}'}</code>. Values remain in this browser unless you export a backup.</p><div className="environment-controls"><select className="form-input" value={environmentId} onChange={e => setEnvironmentId(e.target.value)}><option value="">Select environment</option>{environments.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}</select><button className="button outlined" onClick={newEnvironment}><Plus size={14} /> New</button></div>{selectedEnv ? <><label className="field-label">Environment name</label><input className="form-input" value={selectedEnv.name} onChange={e => void saveEnvironment({ ...selectedEnv, name: e.target.value })} /><div className="environment-pairs"><PairEditor items={selectedEnv.variables} onChange={variables => void saveEnvironment({ ...selectedEnv, variables })} keyPlaceholder="Variable" valuePlaceholder="Value" /></div><button className="button danger outlined" onClick={() => void removeEnvironment()}><Trash2 size={14} /> Delete environment</button></> : <div className="modal-empty">Create or select an environment to edit its variables.</div>}<div className="modal-footer">{selectedEnv && <button className="button outlined" onClick={() => downloadJson(`${selectedEnv.name}.postman_environment.json`, exportPostmanEnvironment(selectedEnv))}><Download size={15} /> Export Postman</button>}<button className="button primary" onClick={() => setModal(null)}><Check size={15} /> Done</button></div></>}
-      {modal === 'proxy' && <><div className="proxy-info"><ShieldAlert size={18} /><div><strong>Proxy is locked down by default</strong><p>Configure exact host allowlist and proxy key as Cloudflare Pages environment variables. The key entered here remains in memory and is not exported.</p></div></div><label className="field-label">Proxy key</label><input className="form-input" type="password" autoComplete="off" value={proxyKey} placeholder="REQDOCK_PROXY_KEY" onChange={e => setProxyKey(e.target.value)} /><p className="modal-note">Set <code>REQDOCK_ALLOWED_HOSTS</code> (comma-separated exact DNS names) and secret <code>REQDOCK_PROXY_KEY</code> under Pages → Settings → Variables and Secrets. Deploy with Git integration so Pages Functions is included. Direct mode requires neither.</p><div className="modal-footer"><button className="button primary" onClick={() => { setTransport('proxy'); setModal(null); }}><Check size={15} /> Use Cloud Proxy</button></div></>}
+      {modal === 'agent' && <>
+         <div className="proxy-info"><ShieldAlert size={18} /><div><strong>Run the connector on your own computer</strong><p>ReqDock cannot directly reach private networks from Cloudflare. The Local Agent listens on 127.0.0.1:47831 only, requires a new random pairing token on every start, and refuses destinations not in its explicit host allowlist. Never expose the agent port or pairing token publicly.</p></div></div>
+         <p className="modal-note">In a terminal, install Node.js 22+, clone the ReqDock repository, run <code>npm install</code> and start:</p>
+         <code className="agent-command">npm run agent -- --allow-hosts=192.168.1.100</code>
+         <p className="modal-note">Replace the example IP with your API host, or omit <code>--allow-hosts</code> to access localhost only. Copy the token printed in the terminal. Refreshing ReqDock intentionally clears it.</p>
+         <label className="field-label" htmlFor="agent-token">Agent pairing token</label>
+         <input id="agent-token" className="form-input" type="password" autoComplete="off" value={agentToken} placeholder="Paste the token printed by Local Agent" onChange={event => { setAgentToken(event.target.value); setAgentConnection('idle'); setAgentMessage(''); }} />
+         <p className="modal-note">Agent endpoint: <code>http://127.0.0.1:47831</code>. Browsers may request permission for access to your local network. The token stays only in this tab's memory.</p>
+         {agentMessage && <div role="status" className={agentConnection === 'online' ? 'agent-status agent-ok' : 'agent-status agent-error'}>{agentMessage}</div>}
+         <div className="modal-footer"><button className="button outlined" disabled={!agentToken || agentConnection === 'checking'} onClick={() => void testAgent()}><Laptop size={14} /> {agentConnection === 'checking' ? 'Connecting...' : 'Test connection'}</button><button className="button primary" disabled={agentConnection !== 'online'} onClick={() => { setTransport('agent'); setModal(null); }}><Check size={14} /> Use Local Agent</button></div>
+       </>}
+       {modal === 'proxy' && <><div className="proxy-info"><ShieldAlert size={18} /><div><strong>Proxy is locked down by default</strong><p>Configure exact host allowlist and proxy key as Cloudflare Pages environment variables. The key entered here remains in memory and is not exported.</p></div></div><label className="field-label">Proxy key</label><input className="form-input" type="password" autoComplete="off" value={proxyKey} placeholder="REQDOCK_PROXY_KEY" onChange={e => setProxyKey(e.target.value)} /><p className="modal-note">Set <code>REQDOCK_ALLOWED_HOSTS</code> (comma-separated exact DNS names) and secret <code>REQDOCK_PROXY_KEY</code> under Pages → Settings → Variables and Secrets. Deploy with Git integration so Pages Functions is included. Direct mode requires neither.</p><div className="modal-footer"><button className="button primary" onClick={() => { setTransport('proxy'); setModal(null); }}><Check size={15} /> Use Cloud Proxy</button></div></>}
     </div></div>}
   </div>;
 }

@@ -1,5 +1,7 @@
 # ReqDock
 
+> **v0.8 Local Agent:** Third transport mode for localhost and private-network HTTP APIs. Runs on the user's own computer, requires Node.js 22+, binds exclusively to `127.0.0.1:47831` and generates an ephemeral pairing token. Targets and web origins are exact allowlists. No cloud deployment change needed. HTTPS public sites may prompt to allow local network access.
+
 **v0.7 Cookie Jar:** Optional (off by default), exact-host Cloud Proxy cookie storage in local IndexedDB. Toggle it with the Cookie icon. Supports Set-Cookie, path/expiry rules, a manual host-only entry and sequential Collection Runner reuse. Browser Direct mode cannot inspect Set-Cookie; Cookie Jar does not apply there. Cookies remain unencrypted on this device and are deliberately excluded from backups/cloud sync. Even HttpOnly-attributed values are readable by client-side JavaScript; do not use on shared/untrusted browsers.
 
 **A local-first API workspace for the web.** Build, send, and inspect HTTP requests in a lightweight browser client. Deploy the UI on Cloudflare Pages, with an optional locked-down Pages Functions proxy.
@@ -145,3 +147,37 @@ Cloud backup is **disabled by default**. ReqDock can upload and restore one encr
 AES-256-GCM encryption runs in the browser, using a key derived with PBKDF2-SHA-256 (250,000 iterations, random salt). The server stores only an authenticated encrypted envelope. The secret sync key authorizes access to the endpoint; the encryption passphrase is not sent to the server. Both values remain in browser memory, not localStorage or IndexedDB, and are cleared when closing the dialog. Use a strong unique passphrase and back it up safely: lost passphrases mean permanent loss of cloud data.
 
 **Limitations:** The endpoint is intended for one private workspace, not multiple independent users. Each upload replaces the previous snapshot, and restoring replaces local workspace data. There is no automatic merging, conflict resolution, background synchronization, or password recovery. The JSON API body is capped at 1 MiB. Require Cloudflare Access protection and rate limiting on `/api/sync` for additional security. D1 backups are not a substitute for independent local exports.
+
+
+## Local Agent: localhost and private-network API calls
+
+From a terminal **on the computer running your browser**, clone this repository and start:
+
+```bash
+npm install
+npm run agent
+# For a specific private API:
+npm run agent -- --allow-hosts=192.168.1.100,api.home.test
+```
+
+The Agent listens only on `http://127.0.0.1:47831`, including when you allow a LAN destination.
+It allows `localhost`, `127.0.0.1`, `[::1]` by default; other **target hosts** must be explicitly listed.
+Copy the one-time terminal token into **ReqDock → Agent → Agent settings → Test connection → Use Local Agent**.
+Pairing tokens are never exported, cloud-synced or persisted in browser storage. Restarting the Agent generates a new token.
+
+Production browser Origin `https://reqdock.convert-alpha.cc` and Vite local dev origins are allowed by default.
+For another hosted ReqDock domain add `--allow-origins=https://your-domain.example`.
+The local agent checks the browser Origin and request Host, requires the token, never follows upstream redirects,
+limits body/response sizes and blocks forwarding to its own port.
+Do not reverse-proxy or publish port 47831. This is a loopback-only connector, not a public API server.
+Run it on the browser computer, not on the Cloudflare host.
+Chrome or other browsers may prompt for Local Network Access; grant it only for a trusted ReqDock origin.
+
+This transport supports HTTP(S) methods, headers, auth, GraphQL, request bodies, Collection Runner,
+and multipart (one file, up to 2 MiB). It does **not** tunnel WebSocket/gRPC or override certificate validation.
+Direct continues to obey the browser's CORS policy; Cloud Proxy still requires its original Cloudflare configuration.
+
+```bash
+npm test
+npm run build
+```
