@@ -199,3 +199,15 @@ test('Collection Runner offers distinct HTTP and gRPC queues',async({page})=>{
   await dialog.getByRole('button',{name:'HTTP',exact:true}).click();
   await expect(dialog.getByRole('button',{name:'HTTP',exact:true})).toHaveClass(/active/);
 });
+
+
+test('Postman script editor is opt-in and keeps safe DSL as the default', async ({page})=>{
+  await page.goto('/');
+  await page.getByRole('button',{name:'Tests',exact:true}).click();
+  const language=page.getByRole('combobox',{name:'Script language'});
+  await expect(language).toHaveValue('dsl');
+  await language.selectOption('postman');
+  await expect(page.getByText('synchronous JavaScript in a separate',{exact:false})).toBeVisible();
+  await language.selectOption('dsl');
+  await expect(language).toHaveValue('dsl');
+});
