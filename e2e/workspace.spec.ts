@@ -104,7 +104,7 @@ test('gRPC unary console offers proto import, target, RPC method and JSON editor
   await expect(dialog.getByLabel('gRPC target')).toHaveValue('grpc://127.0.0.1:50051');
   await expect(dialog.getByLabel('gRPC service')).toHaveValue('demo.Greeter');
   await expect(dialog.getByLabel('gRPC method')).toHaveValue('SayHello');
-  await expect(dialog.getByLabel('gRPC proto')).toContainText('service Greeter');
+  await expect(dialog.getByLabel('gRPC proto')).toHaveValue(/service Greeter/);
   await expect(dialog.getByLabel('gRPC request JSON')).toBeVisible();
   await expect(dialog.getByLabel('gRPC metadata JSON')).toBeVisible();
   await expect(dialog.getByRole('button', { name:'Invoke RPC' })).toBeDisabled();

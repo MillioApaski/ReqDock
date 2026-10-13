@@ -11,7 +11,7 @@ export function validateGrpcTarget(raw, allowedHosts, agentPort) {
   if (typeof raw !== 'string') throw Error('gRPC target is required.');
   const url = new URL(raw);
   if (!['grpc:', 'grpcs:'].includes(url.protocol) || !url.hostname ||
-      url.username || url.password || url.search || url.hash || url.pathname !== '/' ||
+      url.username || url.password || url.search || url.hash || (url.pathname !== '/' && url.pathname !== '') ||
       !/^\d+$/.test(url.port)) {
     throw Error('Use grpc://host:port (plaintext) or grpcs://host:port (TLS).');
   }

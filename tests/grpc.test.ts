@@ -53,6 +53,7 @@ describe('gRPC unary implementation', () => {
     const hosts = new Set(['localhost', '127.0.0.1']);
     expect(()=>validateGrpcTarget('grpc://evil.example.com:50051',hosts,47831)).toThrow('allowlist');
     expect(()=>validateGrpcTarget('grpc://127.0.0.1:47831',hosts,47831)).toThrow('itself');
+    expect(validateGrpcTarget('grpc://127.0.0.1:50051',hosts,47831)).toMatchObject({ host:'127.0.0.1',port:50051,tls:false });
     expect(()=>validateGrpcTarget('http://127.0.0.1:50051',hosts,47831)).toThrow();
     expect(()=>validateGrpcTarget('grpc://user:pass@127.0.0.1:50051',hosts,47831)).toThrow();
     expect(()=>validateGrpcTarget('grpc://127.0.0.1:50051/bad',hosts,47831)).toThrow();
