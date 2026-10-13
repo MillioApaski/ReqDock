@@ -1,5 +1,7 @@
 # ReqDock
 
+> **v1.0 gRPC schema discovery:** Supports multi-file Proto imports (including folder selection) and gRPC reflection using the paired Local Agent. No imported Proto is read from the Agent filesystem. Reflection requires the destination service to enable standard reflection, and reuses the Agent allowlist and TLS policy.
+
 > **v0.9 gRPC Unary:** A standalone RPC console using Local Agent and self-contained `.proto` definitions. Import a `.proto`, enter `grpc://host:port` or `grpcs://host:port`, the fully qualified service/method and a JSON request body. Unary only, max 2 MiB response, 25s deadline. Local Agent must be running and paired; the target host must be allowlisted. No TLS bypass, file imports, reflection or streaming yet.
 
 > **v0.8 Local Agent:** Third transport mode for localhost and private-network HTTP APIs. Runs on the user's own computer, requires Node.js 22+, binds exclusively to `127.0.0.1:47831` and generates an ephemeral pairing token. Targets and web origins are exact allowlists. No cloud deployment change needed. HTTPS public sites may prompt to allow local network access.
@@ -202,3 +204,10 @@ For \`grpcs://\`, the server certificate must be trusted by Node.js. **Certifica
 client/server/bidirectional streaming, arbitrary \`-bin\` metadata, dynamic trust certificates, or
 proxying gRPC directly via Cloudflare Workers. The console does not upload proto content to a third party.
 For existing gRPC APIs using \`import "google/protobuf/empty.proto";\`, provide an inlined equivalent type.
+
+
+## gRPC schema discovery (v1.0)
+- Choose **Local .proto files** to import multiple dependency files or a directory. Select the main file first when importing individual files. Use a folder import if relative subdirectories matter. The Agent resolves imports only from provided in-memory files, with limits of 32 files, 128 KiB per file and 512 KiB total.
+- Choose **Server Reflection**, then **List services**, choose one and **Load RPC methods**. Only unary methods can be invoked. Authentication metadata is used for reflection as well.
+- Reflection sends a standard gRPC request to the target over the Local Agent's allowlisted connection. It does not enumerate arbitrary hosts.
+- gRPC streaming, service persistence and multi-device conflict merges remain out of scope in this version.
