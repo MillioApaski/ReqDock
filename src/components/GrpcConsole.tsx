@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Copy, FileUp, Play, ShieldAlert, RefreshCw, Save, Trash2 } from 'lucide-react';
 import type { Collection, GrpcRequestPreset } from '../types';
 import { consumeGrpcStream, type GrpcStreamEvent } from '../lib/grpc-stream';
@@ -47,6 +47,7 @@ export function GrpcConsole({ agentToken, onPair, collections, defaultCollection
   const controller = useRef<AbortController | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const dirRef = useRef<HTMLInputElement>(null);
+  useEffect(() => () => { controller.current?.abort(); }, []); // Stop active RPC on modal close/unmount.
 
   async function savePreset() {
     if (!collectionId || !collections.some(c => c.id === collectionId)) { setError('Select a collection first.'); return; }
