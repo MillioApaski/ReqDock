@@ -375,7 +375,7 @@ export default function App() {
     catch (cause) { notify(cause instanceof Error ? cause.message : 'Could not import cURL'); }
   };
   const copyCurl = () => void navigator.clipboard.writeText(exportCurl(draft)).then(() => notify('cURL copied to clipboard')).catch(() => notify('Clipboard unavailable'));
-  const backup = async () => downloadJson('reqdock-backup.json', { version: 2, exportedAt: new Date().toISOString(), requests: await db.requests.toArray(), environments: await db.environments.toArray(), collections: await db.collections.toArray(), folders: await db.folders.toArray() });
+  const backup = async () => downloadJson('reqdock-backup.json', { version: 3, exportedAt: new Date().toISOString(), requests: await db.requests.toArray(), environments: await db.environments.toArray(), collections: await db.collections.toArray(), folders: await db.folders.toArray(), grpcRequests: await db.grpcRequests.toArray() });
   const importPostman = async (file?: File) => {
     if (!file) return;
     try {
@@ -436,10 +436,10 @@ export default function App() {
     if (!window.confirm('Replace the existing cloud snapshot with your current local workspace?')) return;
     setSyncBusy(true);
     try {
-      const content = { version: 2, requests: await db.requests.toArray(), environments: await db.environments.toArray(), collections: await db.collections.toArray(), folders: await db.folders.toArray() };
+      const content = { version: 3, requests: await db.requests.toArray(), environments: await db.environments.toArray(), collections: await db.collections.toArray(), folders: await db.folders.toArray(), grpcRequests: await db.grpcRequests.toArray() };
       const encrypted = await encryptBackup(content, syncPassphrase);
       await writeCloudSnapshot(encrypted, syncKey);
-      notify('Encrypted workspace uploaded to Cloudflare D1');
+      notify('Encrypted HTTP and gRPC workspace uploaded to Cloudflare D1');
     } catch (error) { notify(error instanceof Error ? error.message : 'Cloud upload failed'); }
     finally { setSyncBusy(false); }
   };
@@ -449,24 +449,27 @@ export default function App() {
     try {
       const snapshot = await readCloudSnapshot(syncKey);
       const data = readBackup(await decryptBackup(snapshot.encrypted, syncPassphrase));
-      if (!window.confirm(`Restore cloud snapshot from ${snapshot.updatedAt}? This REPLACES your local requests, collections and environments.`)) return;
+      if (!window.confirm(`Restore cloud snapshot from ${snapshot.updatedAt}? This REPLACES local HTTP requests, gRPC requests, collections and environments.`)) return;
       if (!data.collections.length) {
         const defaultCollection: Collection = { id: newId(), name: 'Restored collection', createdAt: Date.now() };
         data.collections = [defaultCollection];
         data.requests = data.requests.map(r => ({ ...r, collectionId: r.collectionId || defaultCollection.id }));
+        data.grpcRequests = data.grpcRequests.map(g => ({...g, collectionId:defaultCollection.id}));
       }
-      await db.transaction('rw', db.requests, db.environments, db.collections, db.folders, async () => {
-        await Promise.all([db.requests.clear(), db.environments.clear(), db.collections.clear(), db.folders.clear()]);
+      await db.transaction('rw', db.requests, db.environments, db.collections, db.folders, db.grpcRequests, async () => {
+        await Promise.all([db.requests.clear(), db.environments.clear(), db.collections.clear(), db.folders.clear(), db.grpcRequests.clear()]);
         await db.collections.bulkPut(data.collections); await db.folders.bulkPut(data.folders);
         await db.requests.bulkPut(data.requests); await db.environments.bulkPut(data.environments);
+        if (data.grpcRequests.length) await db.grpcRequests.bulkPut(data.grpcRequests);
       });
       const restored = data.requests[0] || { ...newRequest(), collectionId: data.collections[0].id };
       setRequests(data.requests); setCollections(data.collections); setFolders(data.folders); setEnvironments(data.environments);
+      setGrpcPresets(data.grpcRequests); setActiveGrpcId(null);
       setExpanded([...data.collections.map(c => c.id), ...data.folders.map(f => f.id)]);
       setRunCollectionId(data.collections[0].id); setEnvironmentId('');
       tabSnapshots.current.clear(); setOpenTabIds([restored.id]);
       setDraft(restored); setParams(paramsFromUrl(restored.url)); setResponse(null); setError('');
-      notify('Encrypted cloud snapshot restored locally');
+      notify('Encrypted HTTP and gRPC workspace restored locally');
     } catch (error) { notify(error instanceof Error ? error.message : 'Cloud restore failed'); }
     finally { setSyncBusy(false); }
   };
@@ -478,15 +481,18 @@ export default function App() {
         const current = collections[0] || { id: newId(), name: 'Imported', createdAt: Date.now() };
         incoming.collections = [current];
         incoming.requests = incoming.requests.map(r => ({ ...r, collectionId: r.collectionId || current.id }));
+        incoming.grpcRequests = incoming.grpcRequests.map(g => ({...g, collectionId:current.id}));
       }
-      await db.transaction('rw', db.requests, db.environments, db.collections, db.folders, async () => {
+      await db.transaction('rw', db.requests, db.environments, db.collections, db.folders, db.grpcRequests, async () => {
         await db.requests.bulkPut(incoming.requests); await db.environments.bulkPut(incoming.environments);
         await db.collections.bulkPut(incoming.collections); await db.folders.bulkPut(incoming.folders);
+        if (incoming.grpcRequests.length) await db.grpcRequests.bulkPut(incoming.grpcRequests);
       });
       const saved = await db.requests.orderBy('updatedAt').reverse().toArray();
       setRequests(saved); setEnvironments(await db.environments.toArray()); setCollections(await db.collections.toArray()); setFolders(await db.folders.toArray());
+      setGrpcPresets(await db.grpcRequests.toArray());
       if (saved.length) selectRequest(saved[0]);
-      notify(`Imported ${incoming.requests.length} requests`);
+      notify(`Imported ${incoming.requests.length} HTTP and ${incoming.grpcRequests.length} gRPC requests`);
     } catch (cause) { notify(cause instanceof Error ? cause.message : 'Import failed'); }
     if (importRef.current) importRef.current.value = '';
   };
