@@ -94,3 +94,20 @@ test('Local Agent pairing UI keeps its token in tab memory only', async ({ page 
   await page.getByRole('button', { name: 'Agent', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Local Agent' }).getByLabel('Agent pairing token')).toHaveValue('');
 });
+
+
+test('gRPC unary console offers proto import, target, RPC method and JSON editors', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name:'gRPC Console' }).click();
+  const dialog=page.getByRole('dialog', { name:'gRPC Console' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel('gRPC target')).toHaveValue('grpc://127.0.0.1:50051');
+  await expect(dialog.getByLabel('gRPC service')).toHaveValue('demo.Greeter');
+  await expect(dialog.getByLabel('gRPC method')).toHaveValue('SayHello');
+  await expect(dialog.getByLabel('gRPC proto')).toHaveValue(/service Greeter/);
+  await expect(dialog.getByLabel('gRPC request JSON')).toBeVisible();
+  await expect(dialog.getByLabel('gRPC metadata JSON')).toBeVisible();
+  await expect(dialog.getByRole('button', { name:'Invoke RPC' })).toBeDisabled();
+  await dialog.getByRole('button', { name:'Pair Agent' }).click();
+  await expect(page.getByRole('dialog', { name:'Local Agent' })).toBeVisible();
+});
