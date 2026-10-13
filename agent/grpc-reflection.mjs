@@ -94,7 +94,7 @@ export async function discoverGrpc(payload, { allowedHosts, agentPort, metadataF
   const root = reflectionRootFromResponse(res);
   const service = root.lookupService(payload.service);
   return { services: [payload.service], methods: Object.values(service.methods).map(method => ({
-    name: method.name, requestStream: method.requestStream, responseStream: method.responseStream,
+    name: method.name, requestStream: Boolean(method.requestStream), responseStream: Boolean(method.responseStream),
   })) };
 }
 
