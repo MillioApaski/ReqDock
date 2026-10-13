@@ -90,22 +90,35 @@ export function decodeBase64(base64: string): Uint8Array {
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes;
 }
+export const LOCAL_AGENT_URL = 'http://127.0.0.1:47831';
 const MAX_RESPONSE = 2 * 1024 * 1024;
-export async function sendRequest(prepared: PreparedRequest, transport: Transport, signal: AbortSignal, proxyKey: string, attachment?: { fieldName: string; file: File }): Promise<SavedResponse> {
+export async function sendRequest(prepared: PreparedRequest, transport: Transport, signal: AbortSignal, proxyKey: string, attachment?: { fieldName: string; file: File }, agentToken = ''): Promise<SavedResponse> {
   const start = performance.now();
   if (attachment && !prepared.multipart) throw new Error('Select form-data to attach a file.');
   if (attachment && attachment.file.size > 700 * 1024 && transport === 'proxy') throw new Error('Cloud Proxy file uploads are limited to 700 KiB due to JSON encoding.');
-  if (transport === 'proxy' && attachment && prepared.multipart) {
+  if (attachment && attachment.file.size > 2 * 1024 * 1024 && transport === 'agent') throw new Error('Local Agent file uploads are limited to 2 MiB.');
+  if ((transport === 'proxy' || transport === 'agent') && attachment && prepared.multipart) {
     const bytes = new Uint8Array(await attachment.file.arrayBuffer());
     prepared = { ...prepared, multipart: { ...prepared.multipart, files: [{ name: attachment.fieldName, filename: attachment.file.name, contentType: attachment.file.type || 'application/octet-stream', base64: bytesToBase64(bytes) }] } };
   }
-  if (transport === 'proxy') {
-    const response = await fetch('/api/proxy', {
-      method: 'POST', signal, headers: { 'Content-Type': 'application/json', ...(proxyKey ? { 'X-ReqDock-Proxy-Key': proxyKey } : {}) },
-      body: JSON.stringify(prepared),
-    });
+  if (transport === 'proxy' || transport === 'agent') {
+    if (transport === 'agent' && !agentToken) throw new Error('Local Agent is not paired. Open Agent settings and enter the terminal pairing token.');
+    const local = transport === 'agent';
+    const endpoint = local ? LOCAL_AGENT_URL + '/request' : '/api/proxy';
+    let response: Response;
+    try {
+      response = await fetch(endpoint, {
+        method: 'POST', signal, headers: { 'Content-Type': 'application/json',
+          ...(local ? { 'X-ReqDock-Agent-Token': agentToken } : proxyKey ? { 'X-ReqDock-Proxy-Key': proxyKey } : {}) },
+        body: JSON.stringify(prepared),
+        cache: 'no-store',
+      });
+    } catch (cause) {
+      if (local && !signal.aborted) throw new Error('Cannot reach Local Agent on 127.0.0.1:47831. Start npm run agent, check the pairing token, and allow local network access in your browser.');
+      throw cause;
+    }
     const result = await response.json() as SavedResponse & { error?: string };
-    if (!response.ok) throw new Error(result.error || `Proxy error (${response.status})`);
+    if (!response.ok) throw new Error(result.error || `${local ? 'Local Agent' : 'Cloud Proxy'} error (${response.status})`);
     return { ...result, duration: Math.round(performance.now() - start) };
   }
   const headers = { ...prepared.headers };

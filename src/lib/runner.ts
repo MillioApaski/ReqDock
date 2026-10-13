@@ -4,7 +4,7 @@ import { prepareRequest, sendRequest } from './request';
 import type { CookieRecord, Environment, RequestModel, Transport } from '../types';
 import { applySetCookies, cookieHeader } from './cookies';
 export type RunResult = { requestId: string; name: string; status?: number; duration?: number; assertions: AssertionResult[]; error?: string };
-export async function runCollection(requests: RequestModel[], environment: Environment | undefined, transport: Transport, proxyKey: string, signal: AbortSignal, onProgress?: (results: RunResult[]) => void, onEnvironmentChange?: (env: Environment) => void, cookieJar?: { cookies: CookieRecord[]; onChange: (cookies: CookieRecord[]) => Promise<void> }): Promise<RunResult[]> {
+export async function runCollection(requests: RequestModel[], environment: Environment | undefined, transport: Transport, proxyKey: string, signal: AbortSignal, onProgress?: (results: RunResult[]) => void, onEnvironmentChange?: (env: Environment) => void, cookieJar?: { cookies: CookieRecord[]; onChange: (cookies: CookieRecord[]) => Promise<void> }, agentToken = ''): Promise<RunResult[]> {
   const results: RunResult[] = [];
   let workingEnv: Environment | undefined = environment ? { ...environment, variables: environment.variables.map(v => ({ ...v })) } : undefined;
   let cookies = cookieJar?.cookies || [];
@@ -18,7 +18,7 @@ export async function runCollection(requests: RequestModel[], environment: Envir
         const value = cookieHeader(cookies, prepared.url);
         if (value) prepared.headers.Cookie = value;
       }
-      const response = await sendRequest(prepared, transport, signal, proxyKey);
+      const response = await sendRequest(prepared, transport, signal, proxyKey, undefined, agentToken);
       if (transport === 'proxy' && cookieJar && response.setCookies?.length) {
         cookies = applySetCookies(cookies, prepared.url, response.setCookies);
         await cookieJar.onChange(cookies);

@@ -1,6 +1,6 @@
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
 export type BodyType = 'none' | 'json' | 'text' | 'urlencoded' | 'graphql' | 'form-data';
-export type Transport = 'direct' | 'proxy';
+export type Transport = 'direct' | 'proxy' | 'agent';
 export type AuthType = 'none' | 'bearer' | 'basic' | 'api-key' | 'oauth2';
 export type Tab = 'params' | 'headers' | 'auth' | 'body' | 'tests';
 export type KeyValue = { id: string; key: string; value: string; enabled: boolean };

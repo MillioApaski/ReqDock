@@ -8,7 +8,7 @@ const secureUrl = (value: string) => {
   if (url.username || url.password) throw new Error('OAuth URL credentials are forbidden.');
   return url;
 };
-export async function authorizePkce(auth: AuthConfig, transport: Transport, proxyKey: string): Promise<string> {
+export async function authorizePkce(auth: AuthConfig, transport: Transport, proxyKey: string, agentToken = ''): Promise<string> {
   // Open synchronously during the user gesture or popup blockers will prevent sign-in.
   const popup = window.open('about:blank', 'reqdock-oauth', 'popup=yes,width=520,height=700');
   if (!popup) throw new Error('Allow popups to start OAuth 2.0 authentication.');
@@ -48,7 +48,7 @@ export async function authorizePkce(auth: AuthConfig, transport: Transport, prox
       popup.location.href = authUrl.toString();
     });
     const form = new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: redirectUri, client_id: auth.clientId, code_verifier: verifier });
-    const response = await sendRequest({ url: tokenUrl.toString(), method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form.toString() }, transport, new AbortController().signal, proxyKey);
+    const response = await sendRequest({ url: tokenUrl.toString(), method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form.toString() }, transport, new AbortController().signal, proxyKey, undefined, agentToken);
     const json: unknown = JSON.parse(response.text);
     if (!json || typeof json !== 'object' || !('access_token' in json) || typeof json.access_token !== 'string') throw new Error('OAuth token endpoint did not return access_token.');
     return json.access_token;

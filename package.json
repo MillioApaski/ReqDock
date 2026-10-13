@@ -1,10 +1,11 @@
 {
   "name": "reqdock",
   "private": true,
-  "version": "0.7.0",
+  "version": "0.8.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "agent": "node agent/reqdock-agent.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "vitest run",
