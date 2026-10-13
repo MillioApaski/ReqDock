@@ -22,6 +22,7 @@ export type RequestModel = {
   assertions?: Assertion[];
   preScript?: string;
   postScript?: string;
+  scriptLanguage?: 'dsl' | 'postman';
 };
 export type GrpcRequestPreset = {
   id: string;

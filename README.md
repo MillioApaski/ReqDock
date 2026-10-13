@@ -1,5 +1,7 @@
 # ReqDock
 
+> **v1.5 Postman script compatibility:** Opt-in synchronous `pm.*` APIs in a QuickJS Web Worker. Supports response tests, variable management and common Chai-style assertions; existing ReqDock DSL stays the default. Imported request-level Postman v2.1 events are retained. No external networking, modules, timers, asynchronous callbacks or full Postman Sandbox compatibility.
+
 > **v1.4 gRPC Collection Runner:** Sequential local execution of saved Unary and all streaming RPCs. Interactive Client/Bidi requests use the saved JSON object, or an array of message objects, then automatically half-close. Includes progress, cancellation and credential-free JSON reports. Requires paired Local Agent; no cloud gRPC relay.
 
 > **v1.3 Complete workspace backups:** ReqDock JSON v3 backups and encrypted Cloudflare D1 snapshots now include saved gRPC RPCs, including imported Proto definitions and Metadata. Backward-compatible with v1/v2 backups. Cookie Jar and ephemeral Agent tokens remain excluded.
@@ -279,3 +281,24 @@ or response content. HTTP Runner keeps its existing transport, assertions and en
 capture behavior. Environment placeholders work for gRPC target, metadata and JSON body.
 The order of gRPC runs is ascending saved update timestamp, then name; HTTP and gRPC
 queues are distinct to avoid surprising cross-protocol executions.
+
+
+## Postman scripts (v1.5)
+
+Under the request **Tests** tab select **Script language → Postman JS**. Use common
+Postman-compatible calls: pm.environment.get/set/unset, pm.variables.get/set,
+pm.response.code/json()/text()/headers.get, pm.test and pm.expect(...).to.eql/equal,
+include, property, lengthOf, above, below and basic type assertions.
+Both Send and HTTP Collection Runner execute the same before/after scripts;
+failed pm.test assertions appear in the response test results and runner report.
+
+Scripts execute in a disposable Web Worker with a fresh, self-contained QuickJS
+runtime, no browser/Node I/O capabilities, no network APIs, and strict memory/
+CPU/wall-clock budgets. Importing scripts does NOT run them automatically;
+the user must send the request or run the collection.
+Not supported: require(), pm.sendRequest(), timers, async/await asynchronous
+operations, full Chai.js syntax or complete Postman Sandbox behavior.
+The original ReqDock script language is still available for older requests.
+
+Postman Collection v2.1 request-level prerequest/test event arrays are imported
+and re-exported. Collection/folder-level inherited scripts are not executed.

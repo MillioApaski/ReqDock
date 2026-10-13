@@ -21,7 +21,7 @@ import { runCollection, type RunResult } from './lib/runner';
 import { runGrpcCollection, type GrpcRunResult } from './lib/grpc-runner';
 import { authorizePkce } from './lib/oauth';
 import { encryptBackup, decryptBackup, writeCloudSnapshot, readCloudSnapshot } from './lib/sync';
-import { applyWorkflowScript } from './lib/script';
+import { executeRequestScript } from './lib/request-scripting';
 import { StreamConsole } from './components/StreamConsole';
 import { GrpcConsole } from './components/GrpcConsole';
 import { applySetCookies, cookieHeader, parseSetCookie } from './lib/cookies';
@@ -325,20 +325,28 @@ export default function App() {
     tabSnapshots.current.set(sentRequestId, { response: null, error: '', scriptResults: [] });
     let prepared;
     let workingEnv: Environment | undefined;
-    try { workingEnv = applyWorkflowScript(draft.preScript || '', selectedEnv, 'before').environment; prepared = prepareRequest(draft, workingEnv); }
-    catch (cause) { const message = cause instanceof Error ? cause.message : 'Invalid request.'; tabSnapshots.current.set(sentRequestId, { response: null, error: message, scriptResults: [] }); if (latestRequestRef.current.id === sentRequestId) setError(message); return; }
+    const controller = new AbortController(); abortRef.current = controller; setSending(true);
+    try {
+      workingEnv = (await executeRequestScript(draft, selectedEnv, 'before', undefined, controller.signal)).environment;
+      prepared = prepareRequest(draft, workingEnv);
+    } catch (cause) {
+      const message = controller.signal.aborted ? 'Request cancelled.' : cause instanceof Error ? cause.message : 'Invalid request.';
+      tabSnapshots.current.set(sentRequestId, { response: null, error: message, scriptResults: [] });
+      if (latestRequestRef.current.id === sentRequestId) setError(message);
+      abortRef.current = null; setSending(false);
+      return;
+    }
     if (transport === 'proxy' && cookieJarEnabled && !Object.keys(prepared.headers).some(key => key.toLowerCase() === 'cookie')) {
       const value = cookieHeader(cookies, prepared.url);
       if (value) prepared.headers.Cookie = value;
     }
-    const controller = new AbortController(); abortRef.current = controller; setSending(true);
     try {
       const result = await sendRequest(prepared, transport, controller.signal, proxyKey, upload, agentToken);
       if (transport === 'proxy' && cookieJarEnabled && result.setCookies?.length) {
         try { await persistCookies(applySetCookies(cookies, prepared.url, result.setCookies)); }
         catch { notify('Cookie could not be saved locally'); }
       }
-      const after = applyWorkflowScript(draft.postScript || '', workingEnv, 'after', result);
+      const after = await executeRequestScript(draft, workingEnv, 'after', result, controller.signal);
       tabSnapshots.current.set(sentRequestId, { response: result, error: '', scriptResults: after.checks });
       if (latestRequestRef.current.id === sentRequestId) { setResponse(result); setScriptResults(after.checks); }
       if (selectedEnv) await saveEnvironment(after.environment);
@@ -599,10 +607,20 @@ export default function App() {
               </>}
               {draft.auth.type === 'api-key' && <><label className="field-label">Key</label><input className="form-input" value={draft.auth.key} onChange={e => updateDraft({ auth: { ...draft.auth, key: e.target.value } })} /><label className="field-label">Value</label><input className="form-input" type="password" autoComplete="off" value={draft.auth.value} onChange={e => updateDraft({ auth: { ...draft.auth, value: e.target.value } })} /><label className="field-label">Add to</label><select className="form-input auth-select" value={draft.auth.location} onChange={e => updateDraft({ auth: { ...draft.auth, location: e.target.value as 'header' | 'query' } })}><option value="header">Header</option><option value="query">Query Params</option></select></>}
             </div>}
-            {activeTab === 'tests' && <div className="tests-panel"><div className="panel-label"><strong>Response assertions</strong><span>Safe declarative checks (no arbitrary JavaScript execution)</span></div>
+            {activeTab === 'tests' && <div className="tests-panel"><div className="panel-label"><strong>Response assertions</strong><span>Declarative checks plus optional isolated Postman scripting</span></div>
               {(draft.assertions || []).map(rule => <div key={rule.id} className="assertion-row"><select className="form-input" value={rule.kind} onChange={e => updateDraft({ assertions: (draft.assertions || []).map(x => x.id === rule.id ? { ...x, kind: e.target.value as Assertion['kind'] } : x) })}><option value="status">Status equals</option><option value="duration">Duration ≤ ms</option><option value="json">JSON path equals</option><option value="header">Header equals</option><option value="contains">Body contains</option></select><input className="form-input" placeholder={rule.kind === 'json' ? 'data.id' : rule.kind === 'header' ? 'Content-Type' : 'Target (optional)'} disabled={!['json','header'].includes(rule.kind)} value={rule.target} onChange={e => updateDraft({ assertions: (draft.assertions || []).map(x => x.id === rule.id ? { ...x, target: e.target.value } : x) })} /><input className="form-input" placeholder="Expected value" value={rule.expected} onChange={e => updateDraft({ assertions: (draft.assertions || []).map(x => x.id === rule.id ? { ...x, expected: e.target.value } : x) })} /><button className="icon-button" title="Remove assertion" onClick={() => updateDraft({ assertions: (draft.assertions || []).filter(x => x.id !== rule.id) })}><Trash2 size={15} /></button></div>)}
               <button className="button outlined" onClick={() => updateDraft({ assertions: [...draft.assertions || [], newAssertion()] })}><Plus size={14} /> Add assertion</button>
-              <div className="script-editors"><label className="field-label">Before request</label><textarea className="form-input script-textarea" spellCheck={false} value={draft.preScript || ''} onChange={e => updateDraft({ preScript: e.target.value })} placeholder={'# Dynamic request variables\nset requestId={{$guid}}'} /><label className="field-label">After response</label><textarea className="form-input script-textarea" spellCheck={false} value={draft.postScript || ''} onChange={e => updateDraft({ postScript: e.target.value })} placeholder={'# Extract a token and verify response\ncapture token=json.access_token\nexpect status=200'} /><p className="modal-note">Safe workflow commands: <code>set key=value</code>, <code>unset key</code>, <code>capture key=json.path</code>, <code>expect status=200</code>, <code>expect header.Content-Type=application/json</code>. No JavaScript execution.</p></div>
+              <div className="script-editors">
+               <label className="field-label">Script language</label>
+               <select className="form-input script-language-select" aria-label="Script language"
+                 value={draft.scriptLanguage || 'dsl'}
+                 onChange={e => updateDraft({scriptLanguage:e.target.value as 'dsl'|'postman'})}>
+                 <option value="dsl">ReqDock safe commands (DSL)</option>
+                 <option value="postman">Postman JS (isolated QuickJS)</option>
+               </select>
+               <label className="field-label">Before request</label><textarea className="form-input script-textarea" spellCheck={false} value={draft.preScript || ''} onChange={e => updateDraft({ preScript: e.target.value })} placeholder={draft.scriptLanguage === 'postman' ? 'pm.environment.set("requestId", Date.now().toString());' : '# Dynamic request variables\nset requestId={{$guid}}'} /><label className="field-label">After response</label><textarea className="form-input script-textarea" spellCheck={false} value={draft.postScript || ''} onChange={e => updateDraft({ postScript: e.target.value })} placeholder={draft.scriptLanguage === 'postman' ? 'pm.test("Status is 200", () => pm.expect(pm.response.code).to.eql(200));' : '# Extract a token and verify response\ncapture token=json.access_token\nexpect status=200'} />{draft.scriptLanguage === 'postman' ?
+                 <p className="modal-note">Runs synchronous JavaScript in a separate, memory-limited QuickJS Web Worker. Supports <code>pm.environment.get/set/unset</code>, <code>pm.variables</code>, <code>pm.response.json/text</code>, <code>pm.test</code> and common <code>pm.expect</code> assertions. No network, require, DOM, timers, pm.sendRequest or async tests. Treat imported scripts as untrusted.</p>
+                 : <p className="modal-note">Safe workflow commands: <code>set key=value</code>, <code>unset key</code>, <code>capture key=json.path</code>, <code>expect status=200</code>, <code>expect header.Content-Type=application/json</code>. No JavaScript execution.</p>}</div>
               {response && <div className="assertion-results">{testResults.map((result, i) => <div key={result.id} className={result.passed ? 'success-color' : 'error-color'}>{result.passed ? '✓' : '✕'} #{i + 1} {result.label} <small>actual: {result.actual}</small></div>)}</div>}
             </div>}
             {activeTab === 'body' && <><div className="body-toolbar"><div className="body-types">{(['none', 'json', 'text', 'urlencoded', 'graphql', 'form-data'] as const).map(type => <label key={type}><input type="radio" checked={draft.bodyType === type} onChange={() => updateDraft({ bodyType: type })} /> {type === 'none' ? 'none' : type === 'json' ? 'JSON' : type === 'text' ? 'raw text' : type === 'urlencoded' ? 'x-www-form-urlencoded' : type === 'graphql' ? 'GraphQL' : 'form-data'}</label>)}</div><span>{['GET','HEAD'].includes(draft.method) ? 'GET/HEAD request bodies are not sent' : 'UTF-8'}</span></div>{draft.bodyType !== 'none' ? <CodeMirror className="body-editor" value={draft.body} height="200px" theme={theme === 'dark' ? oneDark : 'light'} extensions={draft.bodyType === 'json' ? [json()] : []} onChange={value => updateDraft({ body: value })} basicSetup={{ foldGutter: true, lineNumbers: true }} /> : <div className="no-body">This request does not have a body.</div>}{draft.bodyType === 'graphql' && <><label className="field-label">GraphQL variables (JSON)</label><textarea className="form-input graphql-variables" value={draft.graphqlVariables || '{}'} onChange={e => updateDraft({ graphqlVariables: e.target.value })} /></>}{draft.bodyType === 'form-data' && <><p className="modal-note">One form field per line: name=value. Optional file attachment is kept only in memory.</p><div className="file-upload-row"><input className="form-input" aria-label="Form file field name" placeholder="File field name" value={upload?.fieldName || 'file'} onChange={e => setUpload(old => old ? { ...old, fieldName: e.target.value } : old)} /><input aria-label="Choose upload file" type="file" onChange={e => { const file = e.target.files?.[0]; setUpload(file ? { fieldName: upload?.fieldName || 'file', file } : undefined); }} />{upload && <span>{formatBytes(upload.file.size)}</span>}</div></>}</>}
