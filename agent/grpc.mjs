@@ -26,7 +26,7 @@ export function validateGrpcTarget(raw, allowedHosts, agentPort) {
   return { host: url.hostname, port, tls: url.protocol === 'grpcs:' };
 }
 
-export function resolveUnaryMethod(protoText, serviceName, methodName, protoFiles = [], entryName = 'main.proto', reflectionRoot) {
+export function resolveUnaryMethod(protoText, serviceName, methodName, protoFiles = [], entryName = 'main.proto', reflectionRoot, mode = 'unary') {
   if (!reflectionRoot && (typeof protoText !== 'string' || Buffer.byteLength(protoText, 'utf8') > GRPC_PROTO_LIMIT)) {
     throw Error('Inline .proto must be at most 128 KiB.');
   }
@@ -42,7 +42,8 @@ export function resolveUnaryMethod(protoText, serviceName, methodName, protoFile
   const service = root.lookupService(serviceName);
   const method = service.methods[methodName];
   if (!method) throw Error('Method does not exist in this service.');
-  if (method.requestStream || method.responseStream) throw Error('Only unary gRPC methods are supported.');
+  if (mode === 'unary' && (method.requestStream || method.responseStream)) throw Error('Only unary gRPC methods are supported.');
+  if (mode === 'server-stream' && (method.requestStream || !method.responseStream)) throw Error('Only server-streaming gRPC methods are supported.');
   return { root, method, path: '/' + service.fullName.slice(1) + '/' + method.name,
     requestType: method.resolvedRequestType || root.lookupType(method.requestType),
     responseType: method.resolvedResponseType || root.lookupType(method.responseType) };
