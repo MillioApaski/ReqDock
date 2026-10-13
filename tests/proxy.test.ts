@@ -20,6 +20,19 @@ describe('Cloud Proxy safety boundaries', () => {
     }
     expect(fetch).not.toHaveBeenCalled(); vi.unstubAllGlobals();
   });
+  it('returns upstream Set-Cookie fields for the local client jar', async () => {
+    const original = globalThis.fetch;
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{"ok":true}', {
+      headers: { 'Content-Type': 'application/json', 'Set-Cookie': 'sid=abc; HttpOnly; Path=/' },
+    })));
+    try {
+      const response = await onRequestPost(make('https://api.example.com/login'));
+      expect(response.status).toBe(200);
+      const data = await response.json();
+      expect(data.setCookies).toContain('sid=abc; HttpOnly; Path=/');
+      expect(data.status).toBe(200);
+    } finally { vi.stubGlobal('fetch', original); }
+  });
   it('refuses mismatched origins', async () => {
     const request = make('https://api.example.com/'); request.request.headers.set('Origin', 'https://attacker.example');
     const res = await onRequestPost(request);
