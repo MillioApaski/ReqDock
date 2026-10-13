@@ -211,3 +211,26 @@ test('Postman script editor is opt-in and keeps safe DSL as the default', async 
   await language.selectOption('dsl');
   await expect(language).toHaveValue('dsl');
 });
+
+
+test('Postman JS runs before/after through isolated worker and displays assertions',async({page})=>{
+  await page.route('https://api.example.test/demo-token',async route=>{
+    await route.fulfill({
+      status:200,contentType:'application/json',
+      headers:{'Access-Control-Allow-Origin':'*'},
+      body:JSON.stringify({ok:true,value:'demo-token'}),
+    });
+  });
+  await page.goto('/');
+  await page.getByRole('textbox',{name:'Request URL'}).fill('https://api.example.test/{{token}}');
+  await page.getByRole('tab',{name:'Tests'}).click();
+  await page.getByRole('combobox',{name:'Script language'}).selectOption('postman');
+  await page.locator('.script-textarea').first().fill('pm.environment.set("token", "demo-token");');
+  await page.locator('.script-textarea').nth(1).fill(
+    'pm.test("JS status 200", () => pm.expect(pm.response.code).to.eql(200));\n'+
+    'pm.test("JS response body", () => pm.expect(pm.response.json().value).to.eql("demo-token"));',
+  );
+  await page.getByRole('button',{name:'Send',exact:true}).click();
+  await expect(page.getByText('JS status 200')).toBeVisible({timeout:15000});
+  await expect(page.getByText('JS response body')).toBeVisible();
+});
