@@ -73,7 +73,7 @@ export function SyncPanel({onApplied}:{onApplied:(data:Workspace)=>void}){
       const encrypted=await encryptBackup({version:3,...merged.workspace},passphrase);
       const saved=await writeCloudSnapshot(encrypted,key,plan.revision);
       let replaced=false;
-      await db.transaction('rw',db.requests,db.environments,db.collections,db.folders,db.grpcRequests,db.syncBase,async()=>{
+      await db.transaction('rw',[db.requests,db.environments,db.collections,db.folders,db.grpcRequests,db.syncBase],async()=>{
         const current:Workspace={
           requests:await db.requests.toArray(),environments:await db.environments.toArray(),
           collections:await db.collections.toArray(),folders:await db.folders.toArray(),
@@ -120,7 +120,7 @@ export function SyncPanel({onApplied}:{onApplied:(data:Workspace)=>void}){
         data.requests=data.requests.map(item=>({...item,collectionId:item.collectionId||col.id}));
         data.grpcRequests=data.grpcRequests.map(item=>({...item,collectionId:item.collectionId||col.id}));
       }
-      await db.transaction('rw',db.requests,db.environments,db.collections,db.folders,db.grpcRequests,db.syncBase,async()=>{
+      await db.transaction('rw',[db.requests,db.environments,db.collections,db.folders,db.grpcRequests,db.syncBase],async()=>{
         await Promise.all([db.requests.clear(),db.environments.clear(),db.collections.clear(),
           db.folders.clear(),db.grpcRequests.clear()]);
         await db.collections.bulkPut(data.collections);await db.folders.bulkPut(data.folders);

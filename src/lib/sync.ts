@@ -40,7 +40,7 @@ export async function writeCloudSnapshot(encrypted: EncryptedSnapshot, key: stri
 }
 export async function readCloudSnapshot(key: string): Promise<CloudSnapshot> {
   const res = await fetch('/api/sync', { headers: { 'X-ReqDock-Sync-Key': key }, cache: 'no-store' });
-  const json = await res.json() as { encrypted: EncryptedSnapshot; updatedAt: string; error?: string };
+  const json = await res.json() as CloudSnapshot & { error?: string };
   if (!res.ok) throw new Error(json.error || `Cloud sync returned ${res.status}`);
   return json;
 }
