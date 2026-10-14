@@ -359,6 +359,29 @@ test('opt-in auto sync remains active after closing dialog and stops on refresh'
   await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
   await page.waitForTimeout(350);
   expect(revision).toBe(1);
+  // Simulate another device uploading new content with the same passphrase.
+  const otherDevice=await page.evaluate(async()=>{
+    const [{db},{encryptBackup}]=await Promise.all([
+      import('/src/lib/storage.ts'),import('/src/lib/sync.ts'),
+    ]);
+    const data={
+      version:3,requests:await db.requests.toArray(),environments:await db.environments.toArray(),
+      collections:await db.collections.toArray(),folders:await db.folders.toArray(),
+      grpcRequests:await db.grpcRequests.toArray(),
+    };
+    data.requests[0].name='Changed on another device';
+    return encryptBackup(data,'test-secret-passphrase');
+  });
+  encrypted=otherDevice;revision=2;
+  await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('button',{name:'Encrypted cloud sync'}))
+    .toHaveAttribute('title',/revision 2/i,{timeout:15000});
+  expect(revision).toBe(2); // Receiving remote-only updates must not write revision 3.
+  const syncedName=await page.evaluate(async()=>{
+    const {db}=await import('/src/lib/storage.ts');
+    return (await db.requests.toArray())[0].name;
+  });
+  expect(syncedName).toBe('Changed on another device');
   await page.reload();
   await page.getByRole('button',{name:'Encrypted cloud sync'}).click();
   await expect(page.getByRole('button',{name:'Enable auto sync'})).toBeDisabled();
