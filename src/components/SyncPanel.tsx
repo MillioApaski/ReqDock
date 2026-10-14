@@ -331,7 +331,7 @@ export function SyncPanel({onApplied,onWatchStatus,canAutoApply,isOpen}:{
         onClick={autoEnabled?stopAutomatic:startAutomatic}>
         {autoEnabled?'Stop auto sync':'Enable auto sync'}
       </button>
-      <p className="sync-status" role="status">{autoStatus.message}</p>
+      <p className="sync-status">{autoStatus.message}</p>
     </div>
 
     {preview&&merged&&<div className="sync-preview" aria-label="Cloud sync review">

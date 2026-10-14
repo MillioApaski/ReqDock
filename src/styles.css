@@ -580,3 +580,6 @@ input, textarea, select { color: var(--text); }
 .sync-automation .sync-status {grid-column:1/-1;font-size:11px;color:var(--text-muted);}
 .sync-automation>.button {white-space:nowrap;}
 @media(max-width:690px){.sync-automation{grid-template-columns:1fr}.sync-automation .sync-status{grid-column:auto}.sync-automation>.button{justify-self:stretch}}
+
+/* Avoid nested scroll traps inside the already scrollable sync dialog. */
+.sync-panel .sync-preview { max-height:none; overflow:visible; }
