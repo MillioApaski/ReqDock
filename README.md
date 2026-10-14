@@ -1,5 +1,7 @@
 # ReqDock
 
+> **v1.7 Encrypted Cloud History:** Last 20 revisions retained atomically in D1 using SQLite triggers. Browse encrypted history, preview a revision locally, and recover it as a NEW revision through normal CAS protection. Requires one-time migration 0003_sync_history.sql. No passphrases or plaintext workspace content are sent to Cloudflare.
+
 > **v1.6 Conflict-safe multi-device sync:** D1 revision CAS blocks stale uploads; manual encrypted three-way merge detects simultaneous edits and edit/delete races across HTTP, gRPC, Collections, Folders and Environments. Browsers retain encrypted last-sync baselines, resolve per-record conflicts interactively and refuse silent overwrites. Requires migration 0002_sync_revision.sql.
 
 > **v1.5 Postman script compatibility:** Opt-in synchronous `pm.*` APIs in a QuickJS Web Worker. Supports response tests, variable management and common Chai-style assertions; existing ReqDock DSL stays the default. Imported request-level Postman v2.1 events are retained. No external networking, modules, timers, asynchronous callbacks or full Postman Sandbox compatibility.
@@ -336,3 +338,33 @@ Passphrases and server sync keys are memory-only and discarded when closing the
 dialog. The device baseline is stored only as encrypted data in IndexedDB.
 This release supports explicit/manual Sync; it is not background replication,
 multi-tenant accounts or automatic conflict resolution.
+
+
+## Encrypted cloud revision history (v1.7)
+
+Before using Cloud History on an existing database, run the following **once** (after 0001 and 0002):
+\`npx wrangler d1 execute YOUR_DATABASE_NAME --remote --file=migrations/0003_sync_history.sql\`
+
+This creates an append-only encrypted revision history table and SQLite triggers, and backfills the current
+snapshot (if any) into history. Each successful D1 insert or conditional update creates a history
+entry **in the same SQL transaction**. Failed/stale writes do not create a history row.
+Only the 20 most recent revisions remain (history retention is bounded by count, not days).
+
+Open the encrypted sync panel, supply the server sync key and encryption passphrase, and click
+**List history**. Choose a revision with **Inspect**. The browser fetches that encrypted snapshot,
+decrypts it locally, and shows record counts. **Restore as new revision** explicitly confirms the
+destructive action, publishes the chosen historical ciphertext with the *current* expected cloud
+revision (atomic CAS), then replaces local data if it has not changed since inspection.
+Other devices that still hold an older baseline will detect the new revision during their
+next manual sync. Concurrent changes return HTTP 409 and require a fresh inspection.
+
+No decrypted history data or passphrase is stored in D1. Older snapshots with different
+encryption passphrases cannot be inspected with the current passphrase.
+Cloud recovery remains manual and may replace local requests; export a JSON backup first.
+The existing **Restore cloud** button recovers the latest snapshot without creating a new revision.
+
+The Cloud History API extends the same authenticated endpoint:
+\`GET /api/sync?history=1\` returns revision metadata; \`GET /api/sync?revision=N\`
+returns a single encrypted archived snapshot. Existing unversioned GET and CAS PUT
+semantics remain unchanged. Migration 0003 is required for the new history endpoints only;
+the ordinary snapshot endpoint can continue functioning without it.

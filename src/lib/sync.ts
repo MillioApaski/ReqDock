@@ -55,3 +55,31 @@ export async function optionalCloudSnapshot(key:string):Promise<CloudSnapshot|nu
   if(!Number.isSafeInteger(data.revision)||data.revision<1)throw Error('Cloud revision missing. Apply migration 0002_sync_revision.sql.');
   return data;
 }
+
+
+export type CloudHistoryEntry = { revision:number; updatedAt:string };
+
+/** History list contains revision metadata only, never decrypted workspace data. */
+export async function listCloudHistory(key:string):Promise<CloudHistoryEntry[]> {
+  const response=await fetch('/api/sync?history=1',{
+    headers:{'X-ReqDock-Sync-Key':key},cache:'no-store',
+  });
+  const body=await response.json() as {history?:CloudHistoryEntry[];error?:string};
+  if(!response.ok)throw Error(body.error||'Cloud history returned '+response.status);
+  if(!Array.isArray(body.history))throw Error('Invalid cloud history response.');
+  if(body.history.length>20 || body.history.some(entry=>!Number.isSafeInteger(entry.revision)||
+    entry.revision<1||typeof entry.updatedAt!=='string'))throw Error('Invalid cloud history entries.');
+  return body.history;
+}
+
+/** The snapshot is still AES-GCM ciphertext; caller must authenticate/decrypt locally. */
+export async function readCloudHistoryRevision(key:string,revision:number):Promise<CloudSnapshot> {
+  if(!Number.isSafeInteger(revision)||revision<1)throw Error('Invalid history revision.');
+  const response=await fetch('/api/sync?revision='+revision,{
+    headers:{'X-ReqDock-Sync-Key':key},cache:'no-store',
+  });
+  const body=await response.json() as CloudSnapshot & {error?:string};
+  if(!response.ok)throw Error(body.error||'Cloud history returned '+response.status);
+  if(body.revision!==revision||!body.encrypted)throw Error('Cloud history revision mismatch.');
+  return body;
+}

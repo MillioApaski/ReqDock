@@ -39,6 +39,36 @@ function validateEncryptedShape(value) {
 export async function onRequest({ request, env }) {
   const denied = authorized({ request, env }); if (denied) return denied;
   if (request.method === 'GET') {
+    const url = new URL(request.url);
+    const list = url.searchParams.get('history');
+    const wanted = url.searchParams.get('revision');
+    if ((list !== null && list !== '1') || (list !== null && wanted !== null))
+      return fail(400, 'Specify either history=1 or a positive revision.');
+    if (wanted !== null && (!/^[1-9][0-9]{0,14}$/.test(wanted) || !Number.isSafeInteger(Number(wanted))))
+      return fail(400, 'Invalid cloud history revision.');
+    if (list === '1') {
+      try {
+        const result = await env.REQDOCK_DB.prepare(
+          'SELECT revision,updated_at FROM reqdock_snapshot_history WHERE snapshot_id=? ORDER BY revision DESC LIMIT 20',
+        ).bind('default').all();
+        return Response.json({
+          history: (result.results || []).map(row => ({
+            revision: row.revision, updatedAt: row.updated_at,
+          })),
+        }, { headers: noStore });
+      } catch { return fail(500, 'Cloud history unavailable. Apply migration 0003_sync_history.sql.'); }
+    }
+    if (wanted !== null) {
+      try {
+        const record = await env.REQDOCK_DB.prepare(
+          'SELECT data,updated_at,revision FROM reqdock_snapshot_history WHERE snapshot_id=? AND revision=?',
+        ).bind('default', Number(wanted)).first();
+        if (!record) return fail(404, 'Requested encrypted history revision is unavailable.');
+        return Response.json({
+          encrypted: JSON.parse(record.data), updatedAt: record.updated_at, revision: record.revision,
+        }, { headers: noStore });
+      } catch { return fail(500, 'Cloud history unavailable. Apply migration 0003_sync_history.sql.'); }
+    }
     try {
       const record = await env.REQDOCK_DB.prepare(
         'SELECT data,updated_at,revision FROM reqdock_snapshots WHERE id=?',
