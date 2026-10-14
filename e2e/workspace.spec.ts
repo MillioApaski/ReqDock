@@ -322,3 +322,69 @@ test('cloud history can restore an archived ciphertext as a new revision', async
   expect(revisions[1].revision).toBe(2);
   expect(revisions[1].encrypted).toEqual(revisions[0].encrypted);
 });
+
+
+test('opt-in auto sync remains active after closing dialog and stops on refresh',async({page})=>{
+  let revision=0, encrypted:unknown=null;
+  const uploads:{expectedRevision:number;encrypted:unknown}[]=[];
+  await page.route('**/api/sync**',async route=>{
+    if(route.request().method()==='GET'){
+      if(!revision){await route.fulfill({status:404,contentType:'application/json',body:'{"error":"No snapshot"}'});return;}
+      await route.fulfill({status:200,contentType:'application/json',
+        body:JSON.stringify({revision,updatedAt:new Date().toISOString(),encrypted})});
+      return;
+    }
+    const sent=route.request().postDataJSON() as {expectedRevision:number;encrypted:unknown};
+    if(sent.expectedRevision!==revision){
+      await route.fulfill({status:409,contentType:'application/json',body:'{"error":"stale"}'});return;
+    }
+    uploads.push(sent);encrypted=sent.encrypted;revision++;
+    await route.fulfill({status:200,contentType:'application/json',
+      body:JSON.stringify({ok:true,revision,updatedAt:new Date().toISOString()})});
+  });
+  await page.goto('/');
+  await page.getByRole('button',{name:'Encrypted cloud sync'}).click();
+  const dialog=page.getByRole('dialog',{name:'Encrypted cloud backup'});
+  await dialog.getByLabel('Server sync key').fill('test-sync-key');
+  await dialog.getByLabel('Encryption passphrase').fill('test-secret-passphrase');
+  await dialog.getByRole('button',{name:'Enable auto sync'}).click();
+  await expect(dialog.getByRole('button',{name:'Stop auto sync'})).toBeVisible();
+  await dialog.getByTitle('Close').click();
+  await expect.poll(()=>revision,{timeout:15000}).toBe(1);
+  await expect(page.getByRole('button',{name:'Encrypted cloud sync'}))
+    .toHaveAttribute('title',/revision 1/i);
+  expect(uploads).toHaveLength(1);
+  expect(uploads[0].expectedRevision).toBe(0);
+  // No changes must not generate extra cloud history revisions on focus.
+  await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+  await page.waitForTimeout(350);
+  expect(revision).toBe(1);
+  // Simulate another device uploading new content with the same passphrase.
+  const otherDevice=await page.evaluate(async()=>{
+    const [{db},{encryptBackup}]=await Promise.all([
+      import('/src/lib/storage.ts'),import('/src/lib/sync.ts'),
+    ]);
+    const data={
+      version:3,requests:await db.requests.toArray(),environments:await db.environments.toArray(),
+      collections:await db.collections.toArray(),folders:await db.folders.toArray(),
+      grpcRequests:await db.grpcRequests.toArray(),
+    };
+    data.requests[0].name='Changed on another device';
+    return encryptBackup(data,'test-secret-passphrase');
+  });
+  encrypted=otherDevice;revision=2;
+  await page.evaluate(()=>window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('button',{name:'Encrypted cloud sync'}))
+    .toHaveAttribute('title',/revision 2/i,{timeout:15000});
+  expect(revision).toBe(2); // Receiving remote-only updates must not write revision 3.
+  const syncedName=await page.evaluate(async()=>{
+    const {db}=await import('/src/lib/storage.ts');
+    return (await db.requests.toArray())[0].name;
+  });
+  expect(syncedName).toBe('Changed on another device');
+  await page.reload();
+  await page.getByRole('button',{name:'Encrypted cloud sync'}).click();
+  await expect(page.getByRole('button',{name:'Enable auto sync'})).toBeDisabled();
+  await expect(dialog.getByLabel('Server sync key')).toHaveValue('');
+  await expect(dialog.getByLabel('Encryption passphrase')).toHaveValue('');
+});

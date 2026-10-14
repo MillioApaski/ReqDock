@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, Cloud, Download, ShieldAlert, History, RotateCcw } from 'lucide-react';
 import { db } from '../lib/storage';
 import { encryptBackup, decryptBackup, optionalCloudSnapshot, readCloudSnapshot,
@@ -7,6 +7,7 @@ import { encryptBackup, decryptBackup, optionalCloudSnapshot, readCloudSnapshot,
 import { readBackup } from '../lib/export';
 import { emptyWorkspace, mergeWorkspace, type Workspace, type Conflict, type Resolution } from '../lib/workspace-merge';
 import { newId, type Collection } from '../types';
+import { syncAutomatically, type AutoSyncState } from '../lib/auto-sync';
 
 type Preview = {
   local:Workspace; remote:Workspace; base:Workspace; revision:number;
@@ -31,7 +32,13 @@ const fingerprint=(value:Workspace)=>{
   return JSON.stringify(sorted);
 };
 
-export function SyncPanel({onApplied}:{onApplied:(data:Workspace)=>void}){
+export type SyncIndicator={state:AutoSyncState|'off';message:string};
+export function SyncPanel({onApplied,onWatchStatus,canAutoApply,isOpen}:{
+  onApplied:(data:Workspace)=>void;
+  onWatchStatus:(state:SyncIndicator)=>void;
+  canAutoApply:()=>Promise<boolean>;
+  isOpen:boolean;
+}){
   const [key,setKey]=useState('');
   const [passphrase,setPassphrase]=useState('');
   const [busy,setBusy]=useState(false);
@@ -41,9 +48,82 @@ export function SyncPanel({onApplied}:{onApplied:(data:Workspace)=>void}){
   const [historyEntries,setHistoryEntries]=useState<CloudHistoryEntry[]>([]);
   const [historyLoaded,setHistoryLoaded]=useState(false);
   const [historyPreview,setHistoryPreview]=useState<HistoryPreview|null>(null);
+  const [autoEnabled,setAutoEnabled]=useState(false);
+  const [autoStatus,setAutoStatus]=useState<SyncIndicator>({
+    state:'off',message:'Session auto sync is disabled.',
+  });
+  const polling=useRef(false);
+  const onAppliedRef=useRef(onApplied);
+  const onStatusRef=useRef(onWatchStatus);
+  const canApplyRef=useRef(canAutoApply);
+  onAppliedRef.current=onApplied;
+  onStatusRef.current=onWatchStatus;
+  canApplyRef.current=canAutoApply;
+  const statusUpdate=(state:SyncIndicator)=>{
+    setAutoStatus(state);
+    onStatusRef.current(state);
+  };
+  const previousOpen=useRef(isOpen);
+  useEffect(()=>{
+    if(previousOpen.current&&!isOpen&&!autoEnabled){
+      setKey('');setPassphrase('');setPreview(null);setChoices({});
+      setHistoryEntries([]);setHistoryLoaded(false);setHistoryPreview(null);
+    }
+    previousOpen.current=isOpen;
+  },[isOpen,autoEnabled]);
+  useEffect(()=>{
+    if(!autoEnabled) return;
+    let disposed=false;
+    const poll=async()=>{
+      if(disposed||polling.current||isOpen||document.visibilityState!=='visible')return;
+      polling.current=true;
+      try{
+        if(!await canApplyRef.current()){
+          if(!disposed)statusUpdate({state:'deferred',message:'Waiting for unfinished edits or dialogs to close.'});
+          return;
+        }
+        if(!disposed)statusUpdate({state:'watching',message:'Checking encrypted cloud workspace…'});
+        const result=await syncAutomatically(key,passphrase,canApplyRef.current);
+        if(disposed)return;
+        if(result.applied)onAppliedRef.current(result.applied);
+        statusUpdate({state:result.state,message:result.message});
+        if(result.state==='conflict'||result.state==='error'){
+          setAutoEnabled(false);
+          setKey(''); setPassphrase('');
+          // Credentials remain ephemeral. Re-enter them to resolve conflicts.
+        }
+      }catch(error){
+        if(!disposed){
+          statusUpdate({state:'error',message:error instanceof Error?error.message:'Auto sync failed.'});
+          setAutoEnabled(false);
+          setKey(''); setPassphrase('');
+        }
+      }finally{polling.current=false;}
+    };
+    const timer=window.setInterval(()=>void poll(),60000);
+    const checkOnFocus=()=>void poll();
+    window.addEventListener('focus',checkOnFocus);
+    document.addEventListener('visibilitychange',checkOnFocus);
+    if(!isOpen)void poll();
+    return ()=>{
+      disposed=true;
+      window.clearInterval(timer);
+      window.removeEventListener('focus',checkOnFocus);
+      document.removeEventListener('visibilitychange',checkOnFocus);
+    };
+  },[autoEnabled,isOpen,key,passphrase]);
   const enabled=!!key&&passphrase.length>=12&&!busy;
   const resetPreview=()=>{setPreview(null);setChoices({});};
   const clearHistory=()=>{setHistoryEntries([]);setHistoryLoaded(false);setHistoryPreview(null);};
+  const stopAutomatic=()=>{
+    setAutoEnabled(false);
+    statusUpdate({state:'off',message:'Session auto sync stopped. Credentials are not stored.'});
+  };
+  const startAutomatic=()=>{
+    if(!enabled)return;
+    setAutoEnabled(true);
+    statusUpdate({state:'watching',message:'Session auto sync is on. Checking once per minute while this tab is active.'});
+  };
 
   async function review(){
     if(!enabled)return;
@@ -236,13 +316,23 @@ export function SyncPanel({onApplied}:{onApplied:(data:Workspace)=>void}){
     </div></div>
     <label className="field-label">Server sync key</label>
     <input className="form-input" aria-label="Server sync key" type="password" autoComplete="off"
-      value={key} onChange={event=>{setKey(event.target.value);resetPreview();clearHistory();}}
+      value={key} onChange={event=>{if(autoEnabled)stopAutomatic();setKey(event.target.value);resetPreview();clearHistory();}}
       placeholder="REQDOCK_SYNC_KEY"/>
     <label className="field-label">Encryption passphrase (12+ characters)</label>
     <input className="form-input" aria-label="Encryption passphrase" type="password" autoComplete="off"
-      value={passphrase} onChange={event=>{setPassphrase(event.target.value);resetPreview();clearHistory();}}
+      value={passphrase} onChange={event=>{if(autoEnabled)stopAutomatic();setPassphrase(event.target.value);resetPreview();clearHistory();}}
       placeholder="Private encryption passphrase"/>
-    <p className="modal-note">First sync on a device conservatively combines both sides. Later syncs use a locally stored encrypted baseline to detect edits and deletions. Neither key nor passphrase is saved. Apply D1 migration <code>0002_sync_revision.sql</code>.</p>
+    <p className="modal-note">First sync conservatively combines both sides; later syncs use your encrypted baseline for change detection. Credentials stay only in memory. Apply D1 migrations 0002 and 0003 before testing the deployed cloud features.</p>
+    <div className="sync-automation" aria-label="Session automatic sync">
+      <div><strong>Automatic sync in this tab</strong>
+        <p className="modal-note">Optional. Checks about every 60 seconds and when returning to the tab. Applies conflict-free updates; never chooses between conflicting edits. Pauses for unsaved edits, hidden tabs and open dialogs. Stops on conflicts or errors. Nothing runs after closing this browser tab.</p>
+      </div>
+      <button className={autoEnabled?'button outlined':'button primary'} disabled={!autoEnabled&&!enabled}
+        onClick={autoEnabled?stopAutomatic:startAutomatic}>
+        {autoEnabled?'Stop auto sync':'Enable auto sync'}
+      </button>
+      <p className="sync-status">{autoStatus.message}</p>
+    </div>
 
     {preview&&merged&&<div className="sync-preview" aria-label="Cloud sync review">
       <strong>Review cloud revision {preview.revision}</strong>
