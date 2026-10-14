@@ -1,5 +1,7 @@
 # ReqDock
 
+**Cloudflare D1 deployment:** See [Cloud sync migration and acceptance checklist](docs/CLOUD_SYNC_DEPLOYMENT.md) before running production migrations.
+
 > **v1.8 Session Auto Sync:** Opt-in encrypted synchronization once per minute while the tab is active, plus a check when returning to the tab. Auto-merges nonconflicting HTTP/gRPC workspace edits with D1 compare-and-swap, blocks conflicting edits, and reports status in the toolbar. Keys/passphrases remain in browser memory and are erased on reload. Requires previously documented D1 migrations 0002 and 0003; no new database migration.
 
 > **v1.7 Encrypted Cloud History:** Last 20 revisions retained atomically in D1 using SQLite triggers. Browse encrypted history, preview a revision locally, and recover it as a NEW revision through normal CAS protection. Requires one-time migration 0003_sync_history.sql. No passphrases or plaintext workspace content are sent to Cloudflare.
