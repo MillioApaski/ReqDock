@@ -89,12 +89,14 @@ export function SyncPanel({onApplied,onWatchStatus,canAutoApply,isOpen}:{
         statusUpdate({state:result.state,message:result.message});
         if(result.state==='conflict'||result.state==='error'){
           setAutoEnabled(false);
-          // The session remains unpersisted and requires explicit review.
+          setKey(''); setPassphrase('');
+          // Credentials remain ephemeral. Re-enter them to resolve conflicts.
         }
       }catch(error){
         if(!disposed){
           statusUpdate({state:'error',message:error instanceof Error?error.message:'Auto sync failed.'});
           setAutoEnabled(false);
+          setKey(''); setPassphrase('');
         }
       }finally{polling.current=false;}
     };
