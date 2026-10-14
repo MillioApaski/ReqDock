@@ -40,21 +40,39 @@ export async function onRequest({ request, env }) {
   const denied = authorized({ request, env }); if (denied) return denied;
   if (request.method === 'GET') {
     try {
-      const record = await env.REQDOCK_DB.prepare('SELECT data, updated_at FROM reqdock_snapshots WHERE id=?').bind('default').first();
+      const record = await env.REQDOCK_DB.prepare(
+        'SELECT data,updated_at,revision FROM reqdock_snapshots WHERE id=?',
+      ).bind('default').first();
       if (!record) return fail(404, 'No encrypted snapshot has been uploaded.');
-      return Response.json({ encrypted: JSON.parse(record.data), updatedAt: record.updated_at }, { headers: noStore });
-    } catch { return fail(500, 'Cloud storage is unavailable or has not been migrated.'); }
+      return Response.json({
+        encrypted: JSON.parse(record.data), updatedAt: record.updated_at, revision: record.revision,
+      }, { headers: noStore });
+    } catch { return fail(500, 'Cloud storage unavailable. Apply migration 0002_sync_revision.sql.'); }
   }
   if (request.method === 'PUT') {
-    let encrypted;
-    try { encrypted = await readBody(request); }
+    let body;
+    try { body = await readBody(request); }
     catch (error) { return fail(error.message === 'SIZE_LIMIT' ? 413 : 400, 'Invalid or oversized encrypted snapshot.'); }
-    if (!validateEncryptedShape(encrypted)) return fail(400, 'Expected an encrypted workspace envelope.');
+    // Legacy blind-overwrite clients MUST NOT be allowed to clobber a newer device.
+    if (!body || !Number.isSafeInteger(body.expectedRevision) || body.expectedRevision < 0)
+      return fail(428, 'Expected a nonnegative expectedRevision; upgrade ReqDock before uploading.');
+    if (!validateEncryptedShape(body.encrypted)) return fail(400, 'Expected an encrypted workspace envelope.');
     try {
-      await env.REQDOCK_DB.prepare('INSERT INTO reqdock_snapshots (id,data,updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at')
-        .bind('default', JSON.stringify(encrypted), new Date().toISOString()).run();
-      return Response.json({ ok: true }, { headers: noStore });
-    } catch { return fail(500, 'Could not store the encrypted snapshot.'); }
+      const encoded = JSON.stringify(body.encrypted), now = new Date().toISOString();
+      let updated;
+      if (body.expectedRevision === 0) {
+        updated = await env.REQDOCK_DB.prepare(
+          'INSERT INTO reqdock_snapshots (id,data,updated_at,revision) VALUES (?,?,?,1) ON CONFLICT(id) DO NOTHING RETURNING revision',
+        ).bind('default', encoded, now).first();
+      } else {
+        updated = await env.REQDOCK_DB.prepare(
+          'UPDATE reqdock_snapshots SET data=?,updated_at=?,revision=revision+1 WHERE id=? AND revision=? RETURNING revision',
+        ).bind(encoded, now, 'default', body.expectedRevision).first();
+      }
+      // A single SQL write/RETURNING is atomic under concurrent D1 requests.
+      if (!updated) return fail(409, 'Cloud snapshot changed since your last read. Reload and merge again.');
+      return Response.json({ ok: true, revision: updated.revision, updatedAt: now }, { headers: noStore });
+    } catch { return fail(500, 'Cloud storage unavailable. Apply migration 0002_sync_revision.sql.'); }
   }
   return fail(405, 'Method not allowed.');
 }
