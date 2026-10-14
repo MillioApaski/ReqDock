@@ -20,7 +20,8 @@ import { evaluateAssertions, newAssertion } from './lib/assertions';
 import { runCollection, type RunResult } from './lib/runner';
 import { runGrpcCollection, type GrpcRunResult } from './lib/grpc-runner';
 import { authorizePkce } from './lib/oauth';
-import { encryptBackup, decryptBackup, writeCloudSnapshot, readCloudSnapshot } from './lib/sync';
+import { SyncPanel } from './components/SyncPanel';
+import type { Workspace } from './lib/workspace-merge';
 import { executeRequestScript } from './lib/request-scripting';
 import { StreamConsole } from './components/StreamConsole';
 import { GrpcConsole } from './components/GrpcConsole';
@@ -72,9 +73,6 @@ export default function App() {
   const [newCookieValue, setNewCookieValue] = useState('');
   const [upload, setUpload] = useState<{ fieldName: string; file: File } | undefined>(undefined);
   const [authorizing, setAuthorizing] = useState(false);
-  const [syncKey, setSyncKey] = useState('');
-  const [syncPassphrase, setSyncPassphrase] = useState('');
-  const [syncBusy, setSyncBusy] = useState(false);
   const [response, setResponse] = useState<SavedResponse | null>(null);
   const [scriptResults, setScriptResults] = useState<ReturnType<typeof evaluateAssertions>>([]);
   const [error, setError] = useState('');
@@ -133,7 +131,6 @@ export default function App() {
     return () => { mounted = false; };
   }, []);
 
-  useEffect(() => { if (modal !== 'sync') { setSyncKey(''); setSyncPassphrase(''); } }, [modal]);
   useEffect(() => { if (ready && openTabIds.length) try { sessionStorage.setItem('reqdock-tabs', JSON.stringify(openTabIds)); } catch { /* private browsing */ } }, [openTabIds, ready]);
   useEffect(() => { try { localStorage.setItem('reqdock-proxy-cookie-jar', String(cookieJarEnabled)); } catch { /* private browsing */ } }, [cookieJarEnabled]);
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('reqdock-theme', theme); }, [theme]);
@@ -454,47 +451,15 @@ export default function App() {
     } catch (cause) { notify(cause instanceof Error ? cause.message : 'Collection Runner failed.'); }
     finally { setRunning(false); runnerRef.current = null; }
   };
-  const uploadCloud = async () => {
-    if (syncBusy) return;
-    if (!window.confirm('Replace the existing cloud snapshot with your current local workspace?')) return;
-    setSyncBusy(true);
-    try {
-      const content = { version: 3, requests: await db.requests.toArray(), environments: await db.environments.toArray(), collections: await db.collections.toArray(), folders: await db.folders.toArray(), grpcRequests: await db.grpcRequests.toArray() };
-      const encrypted = await encryptBackup(content, syncPassphrase);
-      await writeCloudSnapshot(encrypted, syncKey);
-      notify('Encrypted HTTP and gRPC workspace uploaded to Cloudflare D1');
-    } catch (error) { notify(error instanceof Error ? error.message : 'Cloud upload failed'); }
-    finally { setSyncBusy(false); }
-  };
-  const restoreCloud = async () => {
-    if (syncBusy) return;
-    setSyncBusy(true);
-    try {
-      const snapshot = await readCloudSnapshot(syncKey);
-      const data = readBackup(await decryptBackup(snapshot.encrypted, syncPassphrase));
-      if (!window.confirm(`Restore cloud snapshot from ${snapshot.updatedAt}? This REPLACES local HTTP requests, gRPC requests, collections and environments.`)) return;
-      if (!data.collections.length) {
-        const defaultCollection: Collection = { id: newId(), name: 'Restored collection', createdAt: Date.now() };
-        data.collections = [defaultCollection];
-        data.requests = data.requests.map(r => ({ ...r, collectionId: r.collectionId || defaultCollection.id }));
-        data.grpcRequests = data.grpcRequests.map(g => ({...g, collectionId:defaultCollection.id}));
-      }
-      await db.transaction('rw', db.requests, db.environments, db.collections, db.folders, db.grpcRequests, async () => {
-        await Promise.all([db.requests.clear(), db.environments.clear(), db.collections.clear(), db.folders.clear(), db.grpcRequests.clear()]);
-        await db.collections.bulkPut(data.collections); await db.folders.bulkPut(data.folders);
-        await db.requests.bulkPut(data.requests); await db.environments.bulkPut(data.environments);
-        if (data.grpcRequests.length) await db.grpcRequests.bulkPut(data.grpcRequests);
-      });
-      const restored = data.requests[0] || { ...newRequest(), collectionId: data.collections[0].id };
-      setRequests(data.requests); setCollections(data.collections); setFolders(data.folders); setEnvironments(data.environments);
-      setGrpcPresets(data.grpcRequests); setActiveGrpcId(null);
-      setExpanded([...data.collections.map(c => c.id), ...data.folders.map(f => f.id)]);
-      setRunCollectionId(data.collections[0].id); setEnvironmentId('');
-      tabSnapshots.current.clear(); setOpenTabIds([restored.id]);
-      setDraft(restored); setParams(paramsFromUrl(restored.url)); setResponse(null); setError('');
-      notify('Encrypted HTTP and gRPC workspace restored locally');
-    } catch (error) { notify(error instanceof Error ? error.message : 'Cloud restore failed'); }
-    finally { setSyncBusy(false); }
+  const onSyncApplied = (data:Workspace) => {
+    setRequests(data.requests);setCollections(data.collections);setFolders(data.folders);
+    setEnvironments(data.environments);setGrpcPresets(data.grpcRequests);
+    setExpanded([...data.collections.map(item=>item.id),...data.folders.map(item=>item.id)]);
+    setActiveGrpcId(null);setEnvironmentId('');setRunCollectionId(data.collections[0]?.id||'');
+    const selected=data.requests.find(item=>item.id===draft.id)||data.requests[0];
+    tabSnapshots.current.clear();setResponse(null);setError('');setScriptResults([]);
+    if(selected){setDraft(selected);setParams(paramsFromUrl(selected.url));setOpenTabIds([selected.id]);}
+    else {const fresh={...newRequest(),collectionId:data.collections[0]?.id};setDraft(fresh);setParams([]);setOpenTabIds([]);}
   };
   const importBackup = async (file?: File) => {
     if (!file) return;
@@ -573,7 +538,7 @@ export default function App() {
     <main className="main-panel">
       <header className="topbar">
         <div className="topbar-left"><button className="icon-button sidebar-toggle" aria-label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"} title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"} onClick={() => { setSidebarCollapsed(value => !value); setSidebarOpen(false); }}><Menu size={19} /></button><button className="icon-button mobile-only" aria-label="Toggle menu" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button><span className="breadcrumb">Workspace</span><span className="slash">/</span><span className="breadcrumb-current">{draft.name}</span></div>
-        <div className="topbar-actions"><div className="environment-picker"><Globe2 size={15} /><select aria-label="Current environment" value={environmentId} onChange={e => setEnvironmentId(e.target.value)}><option value="">No environment</option>{environments.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}</select><ChevronDown size={13} /></div><button className="icon-button" aria-label="Cookie Jar" title="Cookie Jar (Cloud Proxy)" onClick={() => setModal('cookies')}><Cookie size={17} /></button><button className="icon-button" title="Encrypted cloud sync" onClick={() => setModal('sync')}><Cloud size={17} /></button><button className="icon-button" title="Edit environments" onClick={() => setModal('environment')}><SlidersHorizontal size={17} /></button><span className="topbar-divider" /><button className="icon-button" title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}</button></div>
+        <div className="topbar-actions"><div className="environment-picker"><Globe2 size={15} /><select aria-label="Current environment" value={environmentId} onChange={e => setEnvironmentId(e.target.value)}><option value="">No environment</option>{environments.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}</select><ChevronDown size={13} /></div><button className="icon-button" aria-label="Cookie Jar" title="Cookie Jar (Cloud Proxy)" onClick={() => setModal('cookies')}><Cookie size={17} /></button><button className="icon-button" title="Encrypted cloud sync" onClick={() => { void db.requests.put(draft).then(() => setModal('sync')).catch(() => notify('Save the current request before syncing.')); }}><Cloud size={17} /></button><button className="icon-button" title="Edit environments" onClick={() => setModal('environment')}><SlidersHorizontal size={17} /></button><span className="topbar-divider" /><button className="icon-button" title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}</button></div>
       </header>
       <div className="request-tabbar" role="tablist" aria-label="Open requests">
         {openTabIds.map(id => {
@@ -655,8 +620,8 @@ export default function App() {
          <div className="cookie-list" aria-label="Saved cookies">{cookies.map(cookie => <div className="cookie-entry" key={cookie.id}><div><strong>{cookie.name}</strong><small>{cookie.domain}{cookie.path} · {cookie.secure ? 'Secure' : 'HTTP/HTTPS'}{cookie.httpOnly ? ' · HttpOnly attribute' : ''}{cookie.expiresAt ? ' · Expires ' + new Date(cookie.expiresAt).toLocaleString() : ' · Session'}</small></div><input aria-label={'Stored value of ' + cookie.name} type="password" readOnly value={cookie.value} /><button className="icon-button" aria-label={'Delete cookie ' + cookie.name} onClick={() => void removeCookie(cookie.id)}><Trash2 size={15} /></button></div>)}{!cookies.length && <div className="modal-empty">No cookies saved. Send a request in Proxy mode with the jar enabled, or add a cookie manually.</div>}</div>
          <div className="modal-footer"><button className="button outlined danger" disabled={!cookies.length} onClick={() => { if (window.confirm('Clear all saved cookies from this browser?')) void persistCookies([]); }}><Trash2 size={14} /> Clear all</button><button className="button primary" onClick={() => setModal(null)}><Check size={14} /> Done</button></div>
        </>}
-       {modal === 'sync' && <><div className="proxy-info"><ShieldAlert size={18} /><div><strong>Encrypted, opt-in workspace backup</strong><p>AES-256-GCM encryption takes place in your browser. Cloudflare D1 stores only ciphertext. You must configure the D1 binding and a separate sync authentication key; neither secret nor passphrase is saved.</p></div></div><label className="field-label">Server sync key</label><input className="form-input" type="password" autoComplete="off" value={syncKey} onChange={e => setSyncKey(e.target.value)} placeholder="REQDOCK_SYNC_KEY" /><label className="field-label">Encryption passphrase (12+ characters)</label><input className="form-input" type="password" autoComplete="off" value={syncPassphrase} onChange={e => setSyncPassphrase(e.target.value)} placeholder="Your private encryption passphrase" /><p className="modal-note">Uploading overwrites the single remote snapshot. Restoring replaces local requests and settings after confirmation. Forgotten encryption passphrases cannot be recovered. D1 binding: <code>REQDOCK_DB</code>.</p><div className="modal-footer"><button className="button outlined" disabled={syncBusy || !syncKey || syncPassphrase.length < 12} onClick={() => void restoreCloud()}><Download size={14} /> Restore cloud</button><button className="button primary" disabled={syncBusy || !syncKey || syncPassphrase.length < 12} onClick={() => void uploadCloud()}><Upload size={14} /> Upload encrypted snapshot</button></div></>}
-      {modal === 'stream' && <StreamConsole initialUrl={draft.url} onClose={() => setModal(null)} />}
+       {modal === 'sync' && <SyncPanel onApplied={onSyncApplied} />}
+        {modal === 'stream' && <StreamConsole initialUrl={draft.url} onClose={() => setModal(null)} />}
        {modal === 'grpc' && <GrpcConsole key={activeGrpcId || 'new'} agentToken={agentToken}
          onPair={() => setModal('agent')} collections={collections} defaultCollectionId={draft.collectionId}
          preset={grpcPresets.find(item => item.id === activeGrpcId)}

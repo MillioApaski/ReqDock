@@ -1,6 +1,8 @@
 import Dexie, { type EntityTable } from 'dexie';
 import type { RequestModel, Environment, HistoryItem, Collection, Folder, CookieRecord, GrpcRequestPreset } from '../types';
+import type { EncryptedSnapshot } from './sync';
 
+export type SyncBaseRecord={id:'default';revision:number;encrypted:EncryptedSnapshot};
 class ReqDockDatabase extends Dexie {
   requests!: EntityTable<RequestModel, 'id'>;
   environments!: EntityTable<Environment, 'id'>;
@@ -9,12 +11,14 @@ class ReqDockDatabase extends Dexie {
   folders!: EntityTable<Folder, 'id'>;
   cookies!: EntityTable<CookieRecord, 'id'>;
   grpcRequests!: EntityTable<GrpcRequestPreset, 'id'>;
+  syncBase!: EntityTable<SyncBaseRecord, 'id'>;
   constructor() {
     super('ReqDock');
     this.version(1).stores({ requests: 'id,updatedAt', environments: 'id,name', history: 'id,at' });
     this.version(2).stores({ requests: 'id,updatedAt,collectionId,folderId', environments: 'id,name', history: 'id,at', collections: 'id,name', folders: 'id,collectionId,parentId' });
     this.version(3).stores({ requests: 'id,updatedAt,collectionId,folderId', environments: 'id,name', history: 'id,at', collections: 'id,name', folders: 'id,collectionId,parentId', cookies: 'id,domain,expiresAt' });
     this.version(4).stores({ requests: 'id,updatedAt,collectionId,folderId', environments: 'id,name', history: 'id,at', collections: 'id,name', folders: 'id,collectionId,parentId', cookies: 'id,domain,expiresAt', grpcRequests: 'id,collectionId,updatedAt' });
+    this.version(5).stores({ requests: 'id,updatedAt,collectionId,folderId', environments: 'id,name', history: 'id,at', collections: 'id,name', folders: 'id,collectionId,parentId', cookies: 'id,domain,expiresAt', grpcRequests: 'id,collectionId,updatedAt', syncBase: 'id,revision' });
   }
 }
 export const db = new ReqDockDatabase();

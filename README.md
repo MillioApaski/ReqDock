@@ -1,5 +1,7 @@
 # ReqDock
 
+> **v1.6 Conflict-safe multi-device sync:** D1 revision CAS blocks stale uploads; manual encrypted three-way merge detects simultaneous edits and edit/delete races across HTTP, gRPC, Collections, Folders and Environments. Browsers retain encrypted last-sync baselines, resolve per-record conflicts interactively and refuse silent overwrites. Requires migration 0002_sync_revision.sql.
+
 > **v1.5 Postman script compatibility:** Opt-in synchronous `pm.*` APIs in a QuickJS Web Worker. Supports response tests, variable management and common Chai-style assertions; existing ReqDock DSL stays the default. Imported request-level Postman v2.1 events are retained. No external networking, modules, timers, asynchronous callbacks or full Postman Sandbox compatibility.
 
 > **v1.4 gRPC Collection Runner:** Sequential local execution of saved Unary and all streaming RPCs. Interactive Client/Bidi requests use the saved JSON object, or an array of message objects, then automatically half-close. Includes progress, cancellation and credential-free JSON reports. Requires paired Local Agent; no cloud gRPC relay.
@@ -302,3 +304,35 @@ The original ReqDock script language is still available for older requests.
 
 Postman Collection v2.1 request-level prerequest/test event arrays are imported
 and re-exported. Collection/folder-level inherited scripts are not executed.
+
+
+## Conflict-safe encrypted multi-device sync (v1.6)
+
+**Database migration is required before deploying the new sync API:**
+\`npx wrangler d1 execute <YOUR_DATABASE_NAME> --remote --file=migrations/0002_sync_revision.sql\`
+Use your actual D1 database name (not the binding variable). Run this migration **once**
+on existing installations; for new databases apply migration 0001 first, then 0002.
+Existing snapshots receive revision 1.
+
+Click Cloud Sync, enter your separate server authentication key and encryption
+passphrase, then **Review sync changes**. The browser decrypts cloud data and
+performs a three-way entity merge: current local, cloud and encrypted baseline
+from the last successful sync. On a new device without a baseline, sync performs
+a conservative two-way union treating both sides as additions. Conflicting edits
+or delete-vs-edit races require an explicit choice of local/cloud per affected
+record; no arbitrary field-level combination of passwords or protobuf content.
+The app preserves parent Collections/Folders if referenced by merged requests.
+
+**Confirm synchronized merge** encrypts the result, sends it with an expected
+D1 revision and refreshes local data. Server-side atomic compare-and-swap
+ensures concurrent/stale uploads fail with HTTP 409; the user must re-review
+updated cloud data. Legacy unversioned PUT requests now fail with HTTP 428.
+If local data changes during upload, the app preserves those edits and records
+the encrypted cloud baseline so the next sync reconciles them. Restore cloud
+remains a destructive operation, requiring confirmation. **Export a local backup
+before restoring.** Tokens used for Local Agent and browser cookies are excluded.
+
+Passphrases and server sync keys are memory-only and discarded when closing the
+dialog. The device baseline is stored only as encrypted data in IndexedDB.
+This release supports explicit/manual Sync; it is not background replication,
+multi-tenant accounts or automatic conflict resolution.

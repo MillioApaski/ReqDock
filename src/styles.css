@@ -535,3 +535,17 @@ input, textarea, select { color: var(--text); }
 
 /* gRPC Collection Runner result metadata */
 .grpc-run-mode { display:block; font-size:10px; font-weight:400; color:var(--text-muted); margin-top:2px; }
+
+
+/* v1.6 revision-safe encrypted sync review */
+.sync-panel { display:grid; gap:11px; min-width:0; }
+.sync-panel .field-label {margin:0;}
+.sync-panel .modal-note {margin:0;}
+.sync-preview {display:grid;gap:10px;padding:12px;background:var(--panel-raised);border:1px solid var(--line);border-radius:9px;max-height:48vh;overflow:auto;}
+.sync-preview>.button {justify-self:end;}
+.sync-conflict {display:grid;grid-template-columns:minmax(0,1fr) minmax(135px,190px);gap:10px;align-items:center;border-top:1px solid var(--line-soft);padding-top:10px;}
+.sync-conflict div {display:grid;gap:5px;min-width:0;}
+.sync-conflict strong {overflow-wrap:anywhere;font-size:12px;}
+.sync-conflict small {color:var(--text-muted);}
+.sync-status {font-size:12px;line-height:1.5;margin:0;white-space:pre-wrap;overflow-wrap:anywhere;}
+@media(max-width:660px){.sync-conflict{grid-template-columns:1fr}.sync-preview>.button{justify-self:stretch}}
