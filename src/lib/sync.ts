@@ -28,13 +28,30 @@ export async function decryptBackup(value: EncryptedSnapshot, passphrase: string
     return JSON.parse(new TextDecoder().decode(plain));
   } catch { throw new Error('Unable to decrypt snapshot. Check the passphrase and data integrity.'); }
 }
-export async function writeCloudSnapshot(encrypted: EncryptedSnapshot, key: string): Promise<void> {
-  const res = await fetch('/api/sync', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-ReqDock-Sync-Key': key }, body: JSON.stringify(encrypted), cache: 'no-store' });
-  if (!res.ok) throw new Error((await res.json() as { error?: string }).error || `Cloud sync returned ${res.status}`);
+export type CloudSnapshot = { encrypted:EncryptedSnapshot; updatedAt:string; revision:number };
+export class CloudVersionConflict extends Error {
+  constructor(){super('Cloud data changed. Fetch the latest snapshot and review conflicts again.');this.name='CloudVersionConflict';}
 }
-export async function readCloudSnapshot(key: string): Promise<{ encrypted: EncryptedSnapshot; updatedAt: string }> {
+export async function writeCloudSnapshot(encrypted: EncryptedSnapshot, key: string, expectedRevision: number): Promise<{revision:number;updatedAt:string}> {
+  const res = await fetch('/api/sync', { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-ReqDock-Sync-Key': key }, body: JSON.stringify({encrypted,expectedRevision}), cache: 'no-store' });
+  if (res.status === 409) throw new CloudVersionConflict();
+  if (!res.ok) throw new Error((await res.json() as { error?: string }).error || `Cloud sync returned ${res.status}`);
+  return await res.json() as {revision:number;updatedAt:string};
+}
+export async function readCloudSnapshot(key: string): Promise<CloudSnapshot> {
   const res = await fetch('/api/sync', { headers: { 'X-ReqDock-Sync-Key': key }, cache: 'no-store' });
   const json = await res.json() as { encrypted: EncryptedSnapshot; updatedAt: string; error?: string };
   if (!res.ok) throw new Error(json.error || `Cloud sync returned ${res.status}`);
   return json;
+}
+
+
+/** A missing workspace (404) is an unsynchronized server at revision zero. */
+export async function optionalCloudSnapshot(key:string):Promise<CloudSnapshot|null>{
+  const res=await fetch('/api/sync',{headers:{'X-ReqDock-Sync-Key':key},cache:'no-store'});
+  if(res.status===404)return null;
+  const data=await res.json() as CloudSnapshot & {error?:string};
+  if(!res.ok)throw Error(data.error||'Cloud sync returned '+res.status);
+  if(!Number.isSafeInteger(data.revision)||data.revision<1)throw Error('Cloud revision missing. Apply migration 0002_sync_revision.sql.');
+  return data;
 }
