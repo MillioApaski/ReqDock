@@ -20,7 +20,7 @@ import { evaluateAssertions, newAssertion } from './lib/assertions';
 import { runCollection, type RunResult } from './lib/runner';
 import { runGrpcCollection, type GrpcRunResult } from './lib/grpc-runner';
 import { authorizePkce } from './lib/oauth';
-import { SyncPanel } from './components/SyncPanel';
+import { SyncPanel, type SyncIndicator } from './components/SyncPanel';
 import type { Workspace } from './lib/workspace-merge';
 import { executeRequestScript } from './lib/request-scripting';
 import { StreamConsole } from './components/StreamConsole';
@@ -43,6 +43,7 @@ export default function App() {
   const [requests, setRequests] = useState<RequestModel[]>([]);
   const [collections, setCollections] = useState<Collection[]>([]);
   const [grpcPresets, setGrpcPresets] = useState<GrpcRequestPreset[]>([]);
+  const [cloudStatus, setCloudStatus] = useState<SyncIndicator>({state:'off',message:'Manual encrypted cloud sync'});
   const [activeGrpcId, setActiveGrpcId] = useState<string | null>(null);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [expanded, setExpanded] = useState<string[]>([]);
@@ -451,6 +452,15 @@ export default function App() {
     } catch (cause) { notify(cause instanceof Error ? cause.message : 'Collection Runner failed.'); }
     finally { setRunning(false); runnerRef.current = null; }
   };
+  const canApplyAutomaticSync = async () => {
+    if (!ready || modal !== null || sending || running || document.visibilityState !== 'visible') return false;
+    const stored = await db.requests.get(draft.id);
+    return !!stored && JSON.stringify(stored) === JSON.stringify(draft);
+  };
+  const updateCloudStatus = (value:SyncIndicator) => {
+    setCloudStatus(value);
+    if (value.state === 'conflict' || value.state === 'error' || value.state === 'updated') notify(value.message);
+  };
   const onSyncApplied = (data:Workspace) => {
     setRequests(data.requests);setCollections(data.collections);setFolders(data.folders);
     setEnvironments(data.environments);setGrpcPresets(data.grpcRequests);
@@ -538,7 +548,10 @@ export default function App() {
     <main className="main-panel">
       <header className="topbar">
         <div className="topbar-left"><button className="icon-button sidebar-toggle" aria-label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"} title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"} onClick={() => { setSidebarCollapsed(value => !value); setSidebarOpen(false); }}><Menu size={19} /></button><button className="icon-button mobile-only" aria-label="Toggle menu" onClick={() => setSidebarOpen(true)}><Menu size={20} /></button><span className="breadcrumb">Workspace</span><span className="slash">/</span><span className="breadcrumb-current">{draft.name}</span></div>
-        <div className="topbar-actions"><div className="environment-picker"><Globe2 size={15} /><select aria-label="Current environment" value={environmentId} onChange={e => setEnvironmentId(e.target.value)}><option value="">No environment</option>{environments.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}</select><ChevronDown size={13} /></div><button className="icon-button" aria-label="Cookie Jar" title="Cookie Jar (Cloud Proxy)" onClick={() => setModal('cookies')}><Cookie size={17} /></button><button className="icon-button" title="Encrypted cloud sync" onClick={() => { void db.requests.put(draft).then(() => setModal('sync')).catch(() => notify('Save the current request before syncing.')); }}><Cloud size={17} /></button><button className="icon-button" title="Edit environments" onClick={() => setModal('environment')}><SlidersHorizontal size={17} /></button><span className="topbar-divider" /><button className="icon-button" title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}</button></div>
+        <div className="topbar-actions"><div className="environment-picker"><Globe2 size={15} /><select aria-label="Current environment" value={environmentId} onChange={e => setEnvironmentId(e.target.value)}><option value="">No environment</option>{environments.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}</select><ChevronDown size={13} /></div><button className="icon-button" aria-label="Cookie Jar" title="Cookie Jar (Cloud Proxy)" onClick={() => setModal('cookies')}><Cookie size={17} /></button><button className={`icon-button cloud-sync-topbar cloud-sync-${cloudStatus.state}`} aria-label="Encrypted cloud sync"
+  title={cloudStatus.message} onClick={() => { void db.requests.put(draft).then(() => setModal('sync')).catch(() => notify('Save the current request before syncing.')); }}>
+  <Cloud size={17}/>{cloudStatus.state !== 'off' && <span className="cloud-sync-indicator" aria-hidden="true"/>}
+</button><button className="icon-button" title="Edit environments" onClick={() => setModal('environment')}><SlidersHorizontal size={17} /></button><span className="topbar-divider" /><button className="icon-button" title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>{theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}</button></div>
       </header>
       <div className="request-tabbar" role="tablist" aria-label="Open requests">
         {openTabIds.map(id => {
@@ -612,7 +625,7 @@ export default function App() {
       </div>
     </main>
     {toast && <div className="toast"><Check size={16} /> {toast}</div>}
-    {modal && <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setModal(null); }}><div className={`modal ${modal === 'grpc' ? 'grpc-modal' : ''}`} role="dialog" aria-modal="true" aria-label={modal === 'curl' ? 'Import cURL' : modal === 'proxy' ? 'Proxy settings' : modal === 'runner' ? 'Collection runner' : modal === 'stream' ? 'WebSocket / SSE console' : modal === 'sync' ? 'Encrypted cloud backup' : modal === 'cookies' ? 'Cookie Jar' : modal === 'agent' ? 'Local Agent' : modal === 'grpc' ? 'gRPC Console' : 'Environments'}><div className="modal-header"><strong>{modal === 'curl' ? 'Import cURL' : modal === 'proxy' ? 'Cloud Proxy settings' : modal === 'runner' ? 'Collection runner' : modal === 'stream' ? 'WebSocket / SSE console' : modal === 'sync' ? 'Encrypted cloud backup' : modal === 'cookies' ? 'Cookie Jar' : modal === 'agent' ? 'Local Agent' : modal === 'grpc' ? 'gRPC Console' : 'Manage environments'}</strong><button className="icon-button" onClick={() => setModal(null)} title="Close"><X size={18} /></button></div>
+    {modal && modal !== 'sync' && <div className="modal-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setModal(null); }}><div className={`modal ${modal === 'grpc' ? 'grpc-modal' : ''}`} role="dialog" aria-modal="true" aria-label={modal === 'curl' ? 'Import cURL' : modal === 'proxy' ? 'Proxy settings' : modal === 'runner' ? 'Collection runner' : modal === 'stream' ? 'WebSocket / SSE console' : modal === 'sync' ? 'Encrypted cloud backup' : modal === 'cookies' ? 'Cookie Jar' : modal === 'agent' ? 'Local Agent' : modal === 'grpc' ? 'gRPC Console' : 'Environments'}><div className="modal-header"><strong>{modal === 'curl' ? 'Import cURL' : modal === 'proxy' ? 'Cloud Proxy settings' : modal === 'runner' ? 'Collection runner' : modal === 'stream' ? 'WebSocket / SSE console' : modal === 'sync' ? 'Encrypted cloud backup' : modal === 'cookies' ? 'Cookie Jar' : modal === 'agent' ? 'Local Agent' : modal === 'grpc' ? 'gRPC Console' : 'Manage environments'}</strong><button className="icon-button" onClick={() => setModal(null)} title="Close"><X size={18} /></button></div>
       {modal === 'cookies' && <>
          <div className="proxy-info"><ShieldAlert size={18} /><div><strong>Cloud Proxy cookie jar</strong><p>Opt-in only. Matching cookies are automatically sent to the exact host in Proxy mode. Values remain unencrypted in your browser's IndexedDB, even if marked HttpOnly. Not browser-enforced HttpOnly protection. Avoid on shared computers. Direct mode follows browser cookie rules and cannot inspect Set-Cookie.</p></div></div>
          <label className="cookie-toggle"><input type="checkbox" checked={cookieJarEnabled} onChange={event => setCookieJarEnabled(event.target.checked)} /> Enable Cloud Proxy cookie capture and sending</label>
@@ -620,7 +633,6 @@ export default function App() {
          <div className="cookie-list" aria-label="Saved cookies">{cookies.map(cookie => <div className="cookie-entry" key={cookie.id}><div><strong>{cookie.name}</strong><small>{cookie.domain}{cookie.path} · {cookie.secure ? 'Secure' : 'HTTP/HTTPS'}{cookie.httpOnly ? ' · HttpOnly attribute' : ''}{cookie.expiresAt ? ' · Expires ' + new Date(cookie.expiresAt).toLocaleString() : ' · Session'}</small></div><input aria-label={'Stored value of ' + cookie.name} type="password" readOnly value={cookie.value} /><button className="icon-button" aria-label={'Delete cookie ' + cookie.name} onClick={() => void removeCookie(cookie.id)}><Trash2 size={15} /></button></div>)}{!cookies.length && <div className="modal-empty">No cookies saved. Send a request in Proxy mode with the jar enabled, or add a cookie manually.</div>}</div>
          <div className="modal-footer"><button className="button outlined danger" disabled={!cookies.length} onClick={() => { if (window.confirm('Clear all saved cookies from this browser?')) void persistCookies([]); }}><Trash2 size={14} /> Clear all</button><button className="button primary" onClick={() => setModal(null)}><Check size={14} /> Done</button></div>
        </>}
-       {modal === 'sync' && <SyncPanel onApplied={onSyncApplied} />}
         {modal === 'stream' && <StreamConsole initialUrl={draft.url} onClose={() => setModal(null)} />}
        {modal === 'grpc' && <GrpcConsole key={activeGrpcId || 'new'} agentToken={agentToken}
          onPair={() => setModal('agent')} collections={collections} defaultCollectionId={draft.collectionId}
@@ -670,5 +682,16 @@ export default function App() {
        </>}
        {modal === 'proxy' && <><div className="proxy-info"><ShieldAlert size={18} /><div><strong>Proxy is locked down by default</strong><p>Configure exact host allowlist and proxy key as Cloudflare Pages environment variables. The key entered here remains in memory and is not exported.</p></div></div><label className="field-label">Proxy key</label><input className="form-input" type="password" autoComplete="off" value={proxyKey} placeholder="REQDOCK_PROXY_KEY" onChange={e => setProxyKey(e.target.value)} /><p className="modal-note">Set <code>REQDOCK_ALLOWED_HOSTS</code> (comma-separated exact DNS names) and secret <code>REQDOCK_PROXY_KEY</code> under Pages → Settings → Variables and Secrets. Deploy with Git integration so Pages Functions is included. Direct mode requires neither.</p><div className="modal-footer"><button className="button primary" onClick={() => { setTransport('proxy'); setModal(null); }}><Check size={15} /> Use Cloud Proxy</button></div></>}
     </div></div>}
+    <div className="modal-backdrop" style={{display:modal === 'sync'?'flex':'none'}}
+      onMouseDown={event=>{if(event.target===event.currentTarget)setModal(null);}}>
+      <div className="modal" role="dialog" aria-modal={modal === 'sync'}
+        aria-label="Encrypted cloud backup">
+        <div className="modal-header"><strong>Encrypted cloud backup</strong>
+          <button className="icon-button" onClick={()=>setModal(null)} title="Close"><X size={18}/></button>
+        </div>
+        <SyncPanel isOpen={modal === 'sync'} onApplied={onSyncApplied}
+          onWatchStatus={updateCloudStatus} canAutoApply={canApplyAutomaticSync}/>
+      </div>
+    </div>
   </div>;
 }

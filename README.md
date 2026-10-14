@@ -1,5 +1,7 @@
 # ReqDock
 
+> **v1.8 Session Auto Sync:** Opt-in encrypted synchronization once per minute while the tab is active, plus a check when returning to the tab. Auto-merges nonconflicting HTTP/gRPC workspace edits with D1 compare-and-swap, blocks conflicting edits, and reports status in the toolbar. Keys/passphrases remain in browser memory and are erased on reload. Requires previously documented D1 migrations 0002 and 0003; no new database migration.
+
 > **v1.7 Encrypted Cloud History:** Last 20 revisions retained atomically in D1 using SQLite triggers. Browse encrypted history, preview a revision locally, and recover it as a NEW revision through normal CAS protection. Requires one-time migration 0003_sync_history.sql. No passphrases or plaintext workspace content are sent to Cloudflare.
 
 > **v1.6 Conflict-safe multi-device sync:** D1 revision CAS blocks stale uploads; manual encrypted three-way merge detects simultaneous edits and edit/delete races across HTTP, gRPC, Collections, Folders and Environments. Browsers retain encrypted last-sync baselines, resolve per-record conflicts interactively and refuse silent overwrites. Requires migration 0002_sync_revision.sql.
@@ -368,3 +370,21 @@ The Cloud History API extends the same authenticated endpoint:
 returns a single encrypted archived snapshot. Existing unversioned GET and CAS PUT
 semantics remain unchanged. Migration 0003 is required for the new history endpoints only;
 the ordinary snapshot endpoint can continue functioning without it.
+
+
+## Optional in-tab auto sync (v1.8)
+Open Cloud Sync, enter the server key and encryption passphrase, and click **Enable auto sync**.
+Close the dialog to activate periodic checks while the browser tab is visible. Every ~60 seconds
+(and when returning to the tab), the app fetches the current revision and performs the encrypted,
+record-level three-way merge against the last successful local baseline. Only conflict-free changes
+are published using D1 CAS and applied locally. If the current editor has unsaved changes, another
+modal is open, or the tab is hidden, automatic synchronization is deferred instead of overwriting
+work. Concurrent cloud writes, malformed state and merge conflicts automatically stop the session.
+The cloud icon shows the most recent status and a tooltip; errors/conflicts also appear in a toast.
+
+Auto sync is **explicit opt-in per tab**. Secrets remain only in the mounted React component's
+memory and are never written to LocalStorage, IndexedDB, sessionStorage, logs or cloud history.
+They are cleared on browser reload, or when exiting the sync dialog with auto sync disabled.
+This is browser-foreground periodic synchronization, not a server daemon or a browser
+background task. The server must have D1 migrations 0002 and 0003 deployed; v1.8 needs no
+additional migration. The first device/cloud merge must still pass the same CAS checks.
