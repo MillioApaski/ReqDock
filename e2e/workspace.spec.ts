@@ -265,3 +265,60 @@ test('encrypted sync previews initial cloud revision and uploads with expected r
   expect(saved.encrypted.version).toBe(1);
   expect(saved.encrypted.ciphertext).toBeTruthy();
 });
+
+
+test('cloud history can restore an archived ciphertext as a new revision', async ({page}) => {
+  const revisions: {revision:number;updatedAt:string;encrypted:unknown}[]=[];
+  await page.route('**/api/sync**',async route=>{
+    const request=route.request();
+    const url=new URL(request.url());
+    const latest=revisions.at(-1);
+    if(request.method()==='GET'){
+      if(url.searchParams.has('history')){
+        await route.fulfill({status:200,contentType:'application/json',
+          body:JSON.stringify({history:[...revisions].reverse().map(x=>({
+            revision:x.revision,updatedAt:x.updatedAt,
+          }))})});
+        return;
+      }
+      const want=url.searchParams.get('revision');
+      const found=want?revisions.find(x=>x.revision===Number(want)):latest;
+      if(!found){
+        await route.fulfill({status:404,contentType:'application/json',body:'{"error":"No snapshot"}'});
+        return;
+      }
+      await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(found)});
+      return;
+    }
+    const sent=request.postDataJSON();
+    const expected=latest?.revision||0;
+    if(sent.expectedRevision!==expected){
+      await route.fulfill({status:409,contentType:'application/json',body:'{"error":"Conflict"}'});
+      return;
+    }
+    const next={encrypted:sent.encrypted,revision:expected+1,updatedAt:new Date().toISOString()};
+    revisions.push(next);
+    await route.fulfill({status:200,contentType:'application/json',
+      body:JSON.stringify({ok:true,revision:next.revision,updatedAt:next.updatedAt})});
+  });
+  page.on('dialog',dialog=>dialog.accept());
+  await page.goto('/');
+  await page.getByRole('button',{name:'Encrypted cloud sync'}).click();
+  const dialog=page.getByRole('dialog',{name:'Encrypted cloud backup'});
+  await dialog.getByLabel('Server sync key').fill('demo-sync-key');
+  await dialog.getByLabel('Encryption passphrase').fill('another-long-test-passphrase');
+  await dialog.getByRole('button',{name:'Review sync changes'}).click();
+  await expect(dialog.getByLabel('Cloud sync review')).toBeVisible();
+  await dialog.getByRole('button',{name:'Confirm synchronized merge'}).click();
+  await expect(dialog.getByRole('status')).toContainText('Synchronized successfully');
+  expect(revisions).toHaveLength(1);
+  await dialog.getByRole('button',{name:'List history'}).click();
+  await expect(dialog.getByLabel('Cloud history versions')).toContainText('Revision 1');
+  await dialog.getByRole('button',{name:'Inspect'}).click();
+  await expect(dialog.getByLabel('Historical restore preview')).toContainText('Current cloud revision: 1');
+  await dialog.getByRole('button',{name:'Restore as new revision'}).click();
+  await expect(dialog.getByRole('status')).toContainText('Restored historical revision 1 as new cloud revision 2');
+  expect(revisions).toHaveLength(2);
+  expect(revisions[1].revision).toBe(2);
+  expect(revisions[1].encrypted).toEqual(revisions[0].encrypted);
+});
