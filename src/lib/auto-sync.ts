@@ -47,8 +47,9 @@ export async function syncAutomatically(key:string,passphrase:string,
   const localHash=workspaceFingerprint(local);
   const mergedHash=workspaceFingerprint(outcome.workspace);
   const remoteHash=workspaceFingerprint(remote);
-  const localEqualsRemote=localHash===remoteHash;
-  const mustWrite=!localEqualsRemote;
+  // A remote-only update already exists in D1: apply it locally without
+  // publishing identical content as another revision.
+  const mustWrite=mergedHash!==remoteHash;
   // Identical local/cloud data never creates a throwaway cloud revision.
   if(!cloud && !mustWrite)return {state:'watching',message:'No workspace snapshot to synchronize yet.',cloudRevision:0};
   let encrypted=cloud?.encrypted;
