@@ -51,7 +51,11 @@ export async function onRequest({ request, env }) {
         const result = await env.REQDOCK_DB.prepare(
           'SELECT revision,updated_at FROM reqdock_snapshot_history WHERE snapshot_id=? ORDER BY revision DESC LIMIT 20',
         ).bind('default').all();
-        return Response.json({ history: result.results || [] }, { headers: noStore });
+        return Response.json({
+          history: (result.results || []).map(row => ({
+            revision: row.revision, updatedAt: row.updated_at,
+          })),
+        }, { headers: noStore });
       } catch { return fail(500, 'Cloud history unavailable. Apply migration 0003_sync_history.sql.'); }
     }
     if (wanted !== null) {
