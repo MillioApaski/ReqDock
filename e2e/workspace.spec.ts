@@ -234,3 +234,34 @@ test('Postman JS runs before/after through isolated worker and displays assertio
   await expect(page.getByText('JS status 200')).toBeVisible({timeout:15000});
   await expect(page.getByText('JS response body')).toBeVisible();
 });
+
+
+test('encrypted sync previews initial cloud revision and uploads with expected revision',async({page})=>{
+  let saved=null;
+  await page.route('**/api/sync',async route=>{
+    if(route.request().method()==='GET'){
+      if(!saved){await route.fulfill({status:404,contentType:'application/json',body:'{"error":"Not found"}'});return;}
+      await route.fulfill({status:200,contentType:'application/json',
+        body:JSON.stringify({encrypted:saved.encrypted,revision:1,updatedAt:new Date().toISOString()})});
+      return;
+    }
+    saved=route.request().postDataJSON();
+    await route.fulfill({status:200,contentType:'application/json',
+      body:JSON.stringify({ok:true,revision:1,updatedAt:new Date().toISOString()})});
+  });
+  page.on('dialog',dialog=>dialog.accept());
+  await page.goto('/');
+  await page.getByRole('button',{name:'Encrypted cloud sync'}).click();
+  const dialog=page.getByRole('dialog',{name:'Encrypted cloud backup'});
+  await dialog.getByLabel('Server sync key').fill('example-key');
+  await dialog.getByLabel('Encryption passphrase').fill('test-secret-passphrase');
+  await dialog.getByRole('button',{name:'Review sync changes'}).click();
+  const preview=dialog.getByLabel('Cloud sync review');
+  await expect(preview).toBeVisible();
+  await expect(preview.getByText('Review cloud revision 0')).toBeVisible();
+  await preview.getByRole('button',{name:'Confirm synchronized merge'}).click();
+  await expect(dialog.getByRole('status')).toContainText('Synchronized successfully');
+  expect(saved.expectedRevision).toBe(0);
+  expect(saved.encrypted.version).toBe(1);
+  expect(saved.encrypted.ciphertext).toBeTruthy();
+});
